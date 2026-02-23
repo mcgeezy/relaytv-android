@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- RelayTV brand (dark mode optimized) -->
+    <color name="relaytv_surface">#0F1216</color> <!-- deep charcoal -->
+    <color name="relaytv_primary">#2F7BFF</color> <!-- electric blue -->
+    <color name="relaytv_on_primary">#FFFFFF</color>
+    <color name="relaytv_secondary">#26D07C</color> <!-- neon green accent -->
+    <color name="relaytv_on_secondary">#00140B</color>
+</resources>

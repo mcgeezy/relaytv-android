@@ -1,0 +1,288 @@
+package pro.relaytv
+
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Bundle
+import android.view.LayoutInflater
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.ArrayAdapter
+import android.widget.LinearLayout
+import android.widget.EditText
+import android.widget.ListView
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AlertDialog
+import androidx.core.content.ContextCompat
+import com.google.android.material.appbar.MaterialToolbar
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.Response
+import java.io.IOException
+
+class MainActivity : AppCompatActivity() {
+
+    private val requestNotificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* no-op */ }
+
+    private lateinit var web: WebView
+    private lateinit var toolbar: MaterialToolbar
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // Android 13+ requires runtime permission for notifications.
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+
+        setContentView(R.layout.activity_main)
+        val openServers = intent.getBooleanExtra("open_servers", false)
+        toolbar = findViewById(R.id.toolbar)
+        web = findViewById(R.id.web)
+
+        toolbar.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                R.id.action_servers -> {
+                    showServerPicker()
+                    true
+                }
+                R.id.action_reload -> {
+                    web.reload()
+                    true
+                }
+                else -> false
+            }
+        }
+
+        web.settings.javaScriptEnabled = true
+        web.settings.domStorageEnabled = true
+        web.settings.mediaPlaybackRequiresUserGesture = false
+        web.settings.userAgentString = web.settings.userAgentString + " RelayTV/1.1.0"
+
+        web.webChromeClient = WebChromeClient()
+        web.webViewClient = object : WebViewClient() {
+            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                if (request.isForMainFrame) {
+                    Toast.makeText(this@MainActivity, "Can't reach server. Switch servers.", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+
+        val base = HostStore.getActiveBaseUrl(this)
+        if (openServers) {
+            showServerPicker(force = base.isNullOrBlank())
+        }
+
+        if (base.isNullOrBlank()) {
+            showServerPicker(force = true)
+            return
+        }
+        checkHealthAndLoad(base.trimEnd('/'))
+    }
+
+    private fun checkHealthAndLoad(base: String) {
+        val req = Net.get(base + "/health")
+        Net.client.newCall(req).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, "Server not reachable. Switch servers.", Toast.LENGTH_LONG).show()
+                    showServerPicker(force = true)
+                }
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                response.use {
+                    if (!it.isSuccessful) {
+                        runOnUiThread {
+                            Toast.makeText(this@MainActivity, "Not a RelayTV server (HTTP ${it.code}).", Toast.LENGTH_LONG).show()
+                            showServerPicker(force = true)
+                        }
+                        return
+                    }
+                }
+                runOnUiThread { web.loadUrl(base + "/ui") }
+            }
+        })
+    }
+
+    private fun showServerPicker(force: Boolean = false) {
+        val view = LayoutInflater.from(this).inflate(R.layout.dialog_server_picker, null)
+        val list = view.findViewById<ListView>(R.id.listServers)
+        val btnAdd = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnAdd)
+        val btnEdit = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnEdit)
+        val btnRemove = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnRemove)
+
+        fun refresh(selectionId: String? = HostStore.getActiveHostId(this)) {
+            val hosts = HostStore.loadHosts(this)
+            val labels = hosts.map { "${it.name}  •  ${it.baseUrl}" }
+            list.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_single_choice, labels)
+            list.choiceMode = ListView.CHOICE_MODE_SINGLE
+            val idx = hosts.indexOfFirst { it.id == selectionId }.let { if (it >= 0) it else 0 }
+            if (hosts.isNotEmpty()) list.setItemChecked(idx, true)
+            btnEdit.isEnabled = hosts.isNotEmpty()
+            btnRemove.isEnabled = hosts.isNotEmpty()
+        }
+
+        refresh()
+
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle(getString(R.string.select_server))
+            .setView(view)
+            .setNegativeButton(if (force) "Exit" else "Close") { d, _ ->
+                d.dismiss()
+                if (force && HostStore.getActiveBaseUrl(this).isNullOrBlank()) {
+                    finish()
+                }
+            }
+            .setPositiveButton("Use") { d, _ ->
+                val hosts = HostStore.loadHosts(this)
+                if (hosts.isEmpty()) {
+                    Toast.makeText(this, "Add a server first.", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                val pos = list.checkedItemPosition.coerceAtLeast(0)
+                val chosen = hosts.getOrNull(pos) ?: hosts.first()
+                HostStore.setActiveHostId(this, chosen.id)
+                toolbar.subtitle = chosen.name
+                checkHealthAndLoad(chosen.baseUrl)
+                d.dismiss()
+            }
+            .create()
+
+        list.setOnItemClickListener { _, _, position, _ ->
+            val hosts = HostStore.loadHosts(this)
+            val chosen = hosts.getOrNull(position) ?: return@setOnItemClickListener
+            toolbar.subtitle = chosen.name
+        }
+        fun showAddEdit(existing: RelayHost? = null) {
+            val nameInput = EditText(this).apply {
+                hint = getString(R.string.server_name)
+                setText(existing?.name ?: "")
+            }
+            val urlInput = EditText(this).apply {
+                hint = getString(R.string.server_url)
+                setText(existing?.baseUrl ?: "")
+                inputType = android.text.InputType.TYPE_TEXT_VARIATION_URI
+            }
+
+            val container = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                val pad = (16 * resources.displayMetrics.density).toInt()
+                setPadding(pad, (8 * resources.displayMetrics.density).toInt(), pad, 0)
+                addView(nameInput)
+                addView(urlInput)
+            }
+
+            val dlg = MaterialAlertDialogBuilder(this)
+                .setTitle(if (existing == null) getString(R.string.add_server) else getString(R.string.edit_server))
+                .setView(container)
+                .setNegativeButton(android.R.string.cancel, null)
+                // We override the positive click to keep the dialog open on validation errors.
+                .setPositiveButton("Save", null)
+                .create()
+
+            dlg.setOnShowListener {
+                val btn = dlg.getButton(AlertDialog.BUTTON_POSITIVE)
+                btn.setOnClickListener {
+                    val name = nameInput.text.toString().trim().ifBlank { "Server" }
+                    val raw = urlInput.text.toString()
+                    val base = HostStore.normalizeBaseUrl(raw)
+
+                    if (base.isNullOrBlank()) {
+                        Toast.makeText(this, "Enter a valid base URL (example: http://10.0.55.2:8787).", Toast.LENGTH_SHORT).show()
+                        return@setOnClickListener
+                    }
+
+                    btn.isEnabled = false
+                    Toast.makeText(this, "Verifying server…", Toast.LENGTH_SHORT).show()
+
+                    val req = Net.get(base + "/health")
+                    Net.client.newCall(req).enqueue(object : Callback {
+                        override fun onFailure(call: Call, e: IOException) {
+                            runOnUiThread {
+                                btn.isEnabled = true
+                                Toast.makeText(this@MainActivity, "Can't reach server. Check address.", Toast.LENGTH_LONG).show()
+                            }
+                        }
+
+                        override fun onResponse(call: Call, response: Response) {
+                            val ok = response.isSuccessful && try {
+                                val body = response.body?.string() ?: ""
+                                val o = org.json.JSONObject(body)
+                                o.optBoolean("ok", false)
+                            } catch (_: Exception) { false }
+
+                            runOnUiThread {
+                                if (!ok) {
+                                    btn.isEnabled = true
+                                    Toast.makeText(this@MainActivity, "Not a RelayTV server (check /health).", Toast.LENGTH_LONG).show()
+                                    return@runOnUiThread
+                                }
+
+                                val host = if (existing == null) {
+                                    HostStore.create(this@MainActivity, name, base)
+                                } else {
+                                    val updated = existing.copy(name = name, baseUrl = base)
+                                    HostStore.upsert(this@MainActivity, updated)
+                                    updated
+                                }
+
+                                HostStore.setActiveHostId(this@MainActivity, host.id)
+                                refresh(host.id)
+                                dlg.dismiss()
+                            }
+                        }
+                    })
+                }
+            }
+
+            dlg.show()
+        }
+
+
+        btnAdd.setOnClickListener { showAddEdit(null) }
+
+        btnEdit.setOnClickListener {
+            val hosts = HostStore.loadHosts(this)
+            val pos = list.checkedItemPosition.coerceAtLeast(0)
+            val existing = hosts.getOrNull(pos) ?: return@setOnClickListener
+            showAddEdit(existing)
+        }
+
+        btnRemove.setOnClickListener {
+            val hosts = HostStore.loadHosts(this)
+            val pos = list.checkedItemPosition.coerceAtLeast(0)
+            val existing = hosts.getOrNull(pos) ?: return@setOnClickListener
+            MaterialAlertDialogBuilder(this)
+                .setTitle("Remove server?")
+                .setMessage("Remove ${existing.name}?")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Remove") { _, _ ->
+                    HostStore.remove(this, existing.id)
+                    refresh()
+                }
+                .show()
+        }
+
+        // Show active server on toolbar
+        HostStore.loadHosts(this).firstOrNull { it.id == HostStore.getActiveHostId(this) }?.let {
+            toolbar.subtitle = it.name
+        }
+
+        dialog.show()
+    }
+
+    override fun onBackPressed() {
+        if (this::web.isInitialized && web.canGoBack()) web.goBack() else super.onBackPressed()
+    }
+}
