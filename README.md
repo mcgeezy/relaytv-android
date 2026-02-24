@@ -124,23 +124,6 @@ Release bundle (for Play):
 
 ------------------------------------------------------------------------
 
-# 📦 Play Store Ready
-
-Release build includes:
-
--   Resource shrinking
--   Code minification
--   Material 3 theming
--   Clean package namespace
-
-Before Play upload:
-
--   Configure signing keystore
--   Increment versionCode
--   Generate .aab
-
-------------------------------------------------------------------------
-
 # 🏠 Home Assistant Integration
 
 RelayTV integrates directly with Home Assistant via:
