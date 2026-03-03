@@ -1,7 +1,14 @@
-# Gradle
+# Android / Gradle build artifacts
 .gradle/
-build/
-app/build/
+.kotlin/
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
 
 # Local config
 local.properties
@@ -10,7 +17,7 @@ local.properties
 .idea/
 *.iml
 
-# Keystore
+# Keystore / signing material
 *.jks
 *.keystore
 
@@ -18,5 +25,5 @@ local.properties
 .DS_Store
 Thumbs.db
 
-#Build
+# Project notes
 todo.md
