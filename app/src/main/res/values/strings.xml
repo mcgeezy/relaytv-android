@@ -9,4 +9,9 @@
     <string name="server_name">Name</string>
     <string name="server_url">Base URL</string>
     <string name="reload">Reload</string>
+    <string name="scan_lan">Scan LAN</string>
+    <string name="scanning_lan">Scanning LAN…</string>
+    <string name="discovered_servers">Discovered RelayTV Servers</string>
+    <string name="discovery_none">No RelayTV servers found on your network.</string>
+    <string name="discovery_failed">LAN discovery failed.</string>
 </resources>

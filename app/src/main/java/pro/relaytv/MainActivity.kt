@@ -52,6 +52,7 @@ class MainActivity : AppCompatActivity() {
     private var initialLoadComplete = false
     private var networkCallbackRegistered = false
     private var isInForeground = false
+    private var mdnsScanner: NsdRelayTvScanner? = null
 
     private val heartbeatRunnable = Runnable { runHeartbeat() }
 
@@ -153,6 +154,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         uiHandler.removeCallbacksAndMessages(null)
         unregisterNetworkCallback()
+        mdnsScanner?.stop()
         super.onDestroy()
     }
 
@@ -298,12 +300,41 @@ class MainActivity : AppCompatActivity() {
         networkCallbackRegistered = false
     }
 
+    private fun upsertDiscoveredServer(server: DiscoveredRelayTvServer): RelayHost {
+        val normalized = HostStore.normalizeBaseUrl(server.baseUrl) ?: server.baseUrl
+        val hosts = HostStore.loadHosts(this)
+        val existing = hosts.firstOrNull {
+            HostStore.normalizeBaseUrl(it.baseUrl) == normalized
+        }
+        return if (existing != null) {
+            existing
+        } else {
+            HostStore.create(this, server.name.ifBlank { "RelayTV" }, normalized)
+        }
+    }
+
+    private fun showDiscoveredServersDialog(
+        servers: List<DiscoveredRelayTvServer>,
+        onPick: (DiscoveredRelayTvServer) -> Unit,
+    ) {
+        val labels = servers.map { "${it.name}  •  ${it.baseUrl}" }.toTypedArray()
+        MaterialAlertDialogBuilder(this)
+            .setTitle(getString(R.string.discovered_servers))
+            .setItems(labels) { _, which ->
+                val chosen = servers.getOrNull(which) ?: return@setItems
+                onPick(chosen)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
     private fun showServerPicker(force: Boolean = false) {
         val view = LayoutInflater.from(this).inflate(R.layout.dialog_server_picker, null)
         val list = view.findViewById<ListView>(R.id.listServers)
         val btnAdd = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnAdd)
         val btnEdit = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnEdit)
         val btnRemove = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnRemove)
+        val btnDiscover = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnDiscover)
 
         fun refresh(selectionId: String? = HostStore.getActiveHostId(this)) {
             val hosts = HostStore.loadHosts(this)
@@ -317,6 +348,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         refresh()
+        btnDiscover.text = getString(R.string.scan_lan)
 
         val dialog = MaterialAlertDialogBuilder(this)
             .setTitle(getString(R.string.select_server))
@@ -341,6 +373,47 @@ class MainActivity : AppCompatActivity() {
                 d.dismiss()
             }
             .create()
+        dialog.setOnDismissListener {
+            mdnsScanner?.stop()
+            btnDiscover.text = getString(R.string.scan_lan)
+            btnDiscover.isEnabled = true
+        }
+
+        btnDiscover.setOnClickListener {
+            btnDiscover.isEnabled = false
+            btnDiscover.text = getString(R.string.scanning_lan)
+
+            val scanner = mdnsScanner ?: NsdRelayTvScanner(this).also { mdnsScanner = it }
+            scanner.scan(callback = object : NsdRelayTvScanner.Callback {
+                override fun onUpdate(servers: List<DiscoveredRelayTvServer>) = Unit
+
+                override fun onFinished(servers: List<DiscoveredRelayTvServer>) {
+                    btnDiscover.text = getString(R.string.scan_lan)
+                    btnDiscover.isEnabled = true
+                    if (!dialog.isShowing) return
+                    if (servers.isEmpty()) {
+                        Toast.makeText(this@MainActivity, getString(R.string.discovery_none), Toast.LENGTH_SHORT).show()
+                        return
+                    }
+                    showDiscoveredServersDialog(servers) { selected ->
+                        val host = upsertDiscoveredServer(selected)
+                        HostStore.setActiveHostId(this@MainActivity, host.id)
+                        toolbar.subtitle = host.name
+                        refresh(host.id)
+                        loadServerBase(host.baseUrl, forcePickerOnFailure = false, manualRefresh = false)
+                        dialog.dismiss()
+                    }
+                }
+
+                override fun onError(message: String) {
+                    btnDiscover.text = getString(R.string.scan_lan)
+                    btnDiscover.isEnabled = true
+                    if (!dialog.isShowing) return
+                    val msg = message.ifBlank { getString(R.string.discovery_failed) }
+                    Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
+                }
+            })
+        }
 
         list.setOnItemClickListener { _, _, position, _ ->
             val hosts = HostStore.loadHosts(this)
