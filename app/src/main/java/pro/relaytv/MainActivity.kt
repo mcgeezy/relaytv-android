@@ -3,8 +3,12 @@ package pro.relaytv
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.LayoutInflater
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -20,20 +24,48 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.Response
 import java.io.IOException
+import kotlin.math.min
 
 class MainActivity : AppCompatActivity() {
 
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* no-op */ }
 
+    private val uiHandler = Handler(Looper.getMainLooper())
+    private val connectivityManager by lazy { getSystemService(ConnectivityManager::class.java) }
+
     private lateinit var web: WebView
     private lateinit var toolbar: MaterialToolbar
+    private lateinit var swipeRefresh: SwipeRefreshLayout
+
+    private var activeBaseUrl: String? = null
+    private var consecutiveHealthFailures = 0
+    private var healthRequestInFlight = false
+    private var mainFrameFailed = false
+    private var initialLoadComplete = false
+    private var networkCallbackRegistered = false
+    private var isInForeground = false
+
+    private val heartbeatRunnable = Runnable { runHeartbeat() }
+
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            runOnUiThread { scheduleHeartbeat(500) }
+        }
+    }
+
+    companion object {
+        private const val HEARTBEAT_OK_MS = 15_000L
+        private const val HEARTBEAT_BASE_RETRY_MS = 4_000L
+        private const val HEARTBEAT_MAX_RETRY_MS = 60_000L
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -49,6 +81,7 @@ class MainActivity : AppCompatActivity() {
         val openServers = intent.getBooleanExtra("open_servers", false)
         toolbar = findViewById(R.id.toolbar)
         web = findViewById(R.id.web)
+        swipeRefresh = findViewById(R.id.swipeRefresh)
 
         toolbar.setOnMenuItemClickListener { item ->
             when (item.itemId) {
@@ -57,7 +90,7 @@ class MainActivity : AppCompatActivity() {
                     true
                 }
                 R.id.action_reload -> {
-                    web.reload()
+                    loadActiveServer(forcePickerOnFailure = false, manualRefresh = true)
                     true
                 }
                 else -> false
@@ -68,12 +101,23 @@ class MainActivity : AppCompatActivity() {
         web.settings.domStorageEnabled = true
         web.settings.mediaPlaybackRequiresUserGesture = false
         web.settings.userAgentString = web.settings.userAgentString + " RelayTV/1.1.0"
+        swipeRefresh.setOnRefreshListener {
+            loadActiveServer(forcePickerOnFailure = false, manualRefresh = true)
+        }
 
         web.webChromeClient = WebChromeClient()
         web.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView, url: String) {
+                mainFrameFailed = false
+                swipeRefresh.isRefreshing = false
+            }
+
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 if (request.isForMainFrame) {
-                    Toast.makeText(this@MainActivity, "Can't reach server. Switch servers.", Toast.LENGTH_LONG).show()
+                    mainFrameFailed = true
+                    swipeRefresh.isRefreshing = false
+                    Toast.makeText(this@MainActivity, "Connection lost. Retrying…", Toast.LENGTH_SHORT).show()
+                    scheduleHeartbeat(1_500)
                 }
             }
         }
@@ -87,32 +131,171 @@ class MainActivity : AppCompatActivity() {
             showServerPicker(force = true)
             return
         }
-        checkHealthAndLoad(base.trimEnd('/'))
+        loadServerBase(base.trimEnd('/'), forcePickerOnFailure = true, manualRefresh = false)
     }
 
-    private fun checkHealthAndLoad(base: String) {
+    override fun onResume() {
+        super.onResume()
+        isInForeground = true
+        registerNetworkCallback()
+        if (!activeBaseUrl.isNullOrBlank()) {
+            scheduleHeartbeat(2_000)
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        isInForeground = false
+        unregisterNetworkCallback()
+        uiHandler.removeCallbacks(heartbeatRunnable)
+    }
+
+    override fun onDestroy() {
+        uiHandler.removeCallbacksAndMessages(null)
+        unregisterNetworkCallback()
+        super.onDestroy()
+    }
+
+    private fun loadServerBase(base: String, forcePickerOnFailure: Boolean, manualRefresh: Boolean) {
+        val normalized = base.trimEnd('/')
+        if (normalized.isBlank()) {
+            swipeRefresh.isRefreshing = false
+            return
+        }
+        activeBaseUrl = normalized
+        if (manualRefresh || !initialLoadComplete) {
+            swipeRefresh.isRefreshing = true
+        }
+        probeServerHealth(
+            base = normalized,
+            forcePickerOnFailure = forcePickerOnFailure,
+            loadUiOnSuccess = true,
+            manualRefresh = manualRefresh
+        )
+    }
+
+    private fun loadActiveServer(forcePickerOnFailure: Boolean, manualRefresh: Boolean) {
+        val base = activeBaseUrl ?: HostStore.getActiveBaseUrl(this)?.trimEnd('/')
+        if (base.isNullOrBlank()) {
+            swipeRefresh.isRefreshing = false
+            showServerPicker(force = true)
+            return
+        }
+        loadServerBase(base, forcePickerOnFailure = forcePickerOnFailure, manualRefresh = manualRefresh)
+    }
+
+    private fun probeServerHealth(
+        base: String,
+        forcePickerOnFailure: Boolean,
+        loadUiOnSuccess: Boolean,
+        manualRefresh: Boolean,
+        fromHeartbeat: Boolean = false,
+    ) {
+        if (healthRequestInFlight) return
+        if (fromHeartbeat && !isInForeground) return
+
         val req = Net.get(base + "/health")
+        healthRequestInFlight = true
         Net.client.newCall(req).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 runOnUiThread {
-                    Toast.makeText(this@MainActivity, "Server not reachable. Switch servers.", Toast.LENGTH_LONG).show()
-                    showServerPicker(force = true)
+                    healthRequestInFlight = false
+                    onServerHealthFailed(
+                        forcePickerOnFailure = forcePickerOnFailure,
+                        manualRefresh = manualRefresh
+                    )
                 }
             }
 
             override fun onResponse(call: Call, response: Response) {
-                response.use {
-                    if (!it.isSuccessful) {
-                        runOnUiThread {
-                            Toast.makeText(this@MainActivity, "Not a RelayTV server (HTTP ${it.code}).", Toast.LENGTH_LONG).show()
-                            showServerPicker(force = true)
-                        }
-                        return
+                val healthy = response.use { it.isSuccessful }
+                runOnUiThread {
+                    healthRequestInFlight = false
+                    if (!healthy) {
+                        onServerHealthFailed(
+                            forcePickerOnFailure = forcePickerOnFailure,
+                            manualRefresh = manualRefresh
+                        )
+                        return@runOnUiThread
                     }
+                    val recovered = consecutiveHealthFailures > 0
+                    consecutiveHealthFailures = 0
+                    if (recovered && !manualRefresh) {
+                        Toast.makeText(this@MainActivity, "Reconnected to RelayTV.", Toast.LENGTH_SHORT).show()
+                    }
+
+                    if (loadUiOnSuccess) {
+                        val uiUrl = "$base/ui"
+                        val shouldLoad = manualRefresh || mainFrameFailed || web.url.isNullOrBlank() || !web.url.orEmpty().startsWith(uiUrl)
+                        if (shouldLoad) {
+                            web.loadUrl(uiUrl)
+                        }
+                    }
+
+                    mainFrameFailed = false
+                    initialLoadComplete = true
+                    swipeRefresh.isRefreshing = false
+                    scheduleHeartbeat(HEARTBEAT_OK_MS)
                 }
-                runOnUiThread { web.loadUrl(base + "/ui") }
             }
         })
+    }
+
+    private fun onServerHealthFailed(forcePickerOnFailure: Boolean, manualRefresh: Boolean) {
+        consecutiveHealthFailures += 1
+        swipeRefresh.isRefreshing = false
+
+        if (forcePickerOnFailure && !initialLoadComplete) {
+            Toast.makeText(this, "Server not reachable. Switch servers.", Toast.LENGTH_LONG).show()
+            showServerPicker(force = true)
+            return
+        }
+
+        if (manualRefresh) {
+            Toast.makeText(this, "Can't reach server right now.", Toast.LENGTH_SHORT).show()
+        } else if (consecutiveHealthFailures == 1) {
+            Toast.makeText(this, "Connection lost. Retrying…", Toast.LENGTH_SHORT).show()
+        }
+        scheduleHeartbeat(nextRetryDelayMs())
+    }
+
+    private fun nextRetryDelayMs(): Long {
+        val cappedPower = min(4, (consecutiveHealthFailures - 1).coerceAtLeast(0))
+        val delay = HEARTBEAT_BASE_RETRY_MS * (1L shl cappedPower)
+        return min(delay, HEARTBEAT_MAX_RETRY_MS)
+    }
+
+    private fun runHeartbeat() {
+        if (!isInForeground) return
+        val base = activeBaseUrl ?: HostStore.getActiveBaseUrl(this)?.trimEnd('/') ?: return
+        probeServerHealth(
+            base = base,
+            forcePickerOnFailure = false,
+            loadUiOnSuccess = mainFrameFailed || web.url.isNullOrBlank(),
+            manualRefresh = false,
+            fromHeartbeat = true
+        )
+    }
+
+    private fun scheduleHeartbeat(delayMs: Long) {
+        uiHandler.removeCallbacks(heartbeatRunnable)
+        if (!isInForeground) return
+        if (activeBaseUrl.isNullOrBlank()) return
+        uiHandler.postDelayed(heartbeatRunnable, delayMs)
+    }
+
+    private fun registerNetworkCallback() {
+        if (networkCallbackRegistered) return
+        runCatching {
+            connectivityManager.registerDefaultNetworkCallback(networkCallback)
+            networkCallbackRegistered = true
+        }
+    }
+
+    private fun unregisterNetworkCallback() {
+        if (!networkCallbackRegistered) return
+        runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
+        networkCallbackRegistered = false
     }
 
     private fun showServerPicker(force: Boolean = false) {
@@ -154,7 +337,7 @@ class MainActivity : AppCompatActivity() {
                 val chosen = hosts.getOrNull(pos) ?: hosts.first()
                 HostStore.setActiveHostId(this, chosen.id)
                 toolbar.subtitle = chosen.name
-                checkHealthAndLoad(chosen.baseUrl)
+                loadServerBase(chosen.baseUrl, forcePickerOnFailure = true, manualRefresh = false)
                 d.dismiss()
             }
             .create()
