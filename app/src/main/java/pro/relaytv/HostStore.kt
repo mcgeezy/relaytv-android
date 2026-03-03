@@ -32,6 +32,7 @@ object HostStore {
 
 private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
+    @Suppress("UNUSED_PARAMETER")
     fun ensureMigrated(ctx: Context) {
         // no-op
     }
