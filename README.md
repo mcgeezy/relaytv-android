@@ -124,6 +124,43 @@ Release bundle (for Play):
 
 ------------------------------------------------------------------------
 
+## 🔧 Local Build/Test Scripts
+
+Validate host environment:
+
+    ./scripts/check-android-env.sh all
+
+Install SDK components (requires sdkmanager):
+
+    ./scripts/bootstrap-android.sh
+
+Build + lint + unit tests:
+
+    ./scripts/build-debug.sh
+
+Connected/device tests:
+
+    ./scripts/test-connected.sh
+
+------------------------------------------------------------------------
+
+# 📦 Play Store Ready
+
+Release build includes:
+
+-   Resource shrinking
+-   Code minification
+-   Material 3 theming
+-   Clean package namespace
+
+Before Play upload:
+
+-   Configure signing keystore
+-   Increment versionCode
+-   Generate .aab
+
+------------------------------------------------------------------------
+
 # 🏠 Home Assistant Integration
 
 RelayTV integrates directly with Home Assistant via:

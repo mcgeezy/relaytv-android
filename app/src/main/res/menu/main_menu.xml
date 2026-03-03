@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<menu xmlns:android="http://schemas.android.com/apk/res/android">
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
     <item
         android:id="@+id/action_servers"
         android:title="@string/servers"
         android:icon="@android:drawable/ic_menu_manage"
-        android:showAsAction="ifRoom" />
+        app:showAsAction="ifRoom" />
     <item
         android:id="@+id/action_reload"
-        android:title="Reload"
+        android:title="@string/reload"
         android:icon="@android:drawable/ic_popup_sync"
-        android:showAsAction="ifRoom" />
+        app:showAsAction="ifRoom" />
 </menu>

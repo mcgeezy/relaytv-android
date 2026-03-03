@@ -8,4 +8,5 @@
     <string name="select_server">Select RelayTV server</string>
     <string name="server_name">Name</string>
     <string name="server_url">Base URL</string>
+    <string name="reload">Reload</string>
 </resources>
