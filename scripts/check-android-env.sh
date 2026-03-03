@@ -85,8 +85,10 @@ check_sdk() {
 
     if command -v sdkmanager >/dev/null 2>&1; then
         ok "Found command: sdkmanager"
+    elif [[ -x "${sdk_root}/cmdline-tools/latest/bin/sdkmanager" ]]; then
+        ok "Found sdkmanager at ${sdk_root}/cmdline-tools/latest/bin/sdkmanager"
     else
-        warn "sdkmanager not in PATH. bootstrap script can still work if cmdline-tools path is set manually."
+        warn "sdkmanager not found in PATH or ${sdk_root}/cmdline-tools/latest/bin."
     fi
 }
 

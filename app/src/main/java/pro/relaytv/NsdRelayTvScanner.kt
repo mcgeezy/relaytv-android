@@ -62,12 +62,12 @@ class NsdRelayTvScanner(context: Context) {
             val serviceTag = attributes?.get("service")?.toUtf8()?.lowercase()
             if (!serviceTag.isNullOrBlank() && serviceTag != "relaytv") return
 
-            val ip = (info.host?.hostAddress ?: "").trim().substringBefore('%')
+            val ip = nsdHostAddress(info)
             if (ip.isBlank()) return
             val host = if (ip.contains(":")) "[$ip]" else ip
             val base = HostStore.normalizeBaseUrl("http://$host:${info.port}") ?: return
             val path = attributes?.get("path")?.toUtf8()?.ifBlank { "/ui" } ?: "/ui"
-            val name = info.serviceName?.trim().orEmpty().ifBlank { "RelayTV" }
+            val name = info.serviceName.trim().ifBlank { "RelayTV" }
 
             val server = DiscoveredRelayTvServer(name = name, baseUrl = base, path = path)
             found[base] = server
@@ -96,7 +96,7 @@ class NsdRelayTvScanner(context: Context) {
             override fun onServiceFound(serviceInfo: NsdServiceInfo) {
                 if (!serviceInfo.serviceType.equals(SERVICE_TYPE, ignoreCase = true)) return
 
-                nsdManager.resolveService(serviceInfo, object : NsdManager.ResolveListener {
+                resolveServiceCompat(serviceInfo, object : NsdManager.ResolveListener {
                     override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
 
                     override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
@@ -106,7 +106,7 @@ class NsdRelayTvScanner(context: Context) {
             }
 
             override fun onServiceLost(serviceInfo: NsdServiceInfo) {
-                val ip = (serviceInfo.host?.hostAddress ?: "").trim().substringBefore('%')
+                val ip = nsdHostAddress(serviceInfo)
                 if (ip.isBlank()) return
                 val host = if (ip.contains(":")) "[$ip]" else ip
                 val base = HostStore.normalizeBaseUrl("http://$host:${serviceInfo.port}") ?: return
@@ -158,6 +158,15 @@ class NsdRelayTvScanner(context: Context) {
         }
         multicastLock = null
     }
+
+    @Suppress("DEPRECATION")
+    private fun resolveServiceCompat(serviceInfo: NsdServiceInfo, listener: NsdManager.ResolveListener) {
+        nsdManager.resolveService(serviceInfo, listener)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun nsdHostAddress(serviceInfo: NsdServiceInfo): String =
+        (serviceInfo.host?.hostAddress ?: "").trim().substringBefore('%')
 }
 
 private fun ByteArray.toUtf8(): String = toString(Charsets.UTF_8).trim()

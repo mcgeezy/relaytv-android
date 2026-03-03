@@ -21,6 +21,7 @@ import android.widget.EditText
 import android.widget.ListView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
@@ -83,6 +84,17 @@ class MainActivity : AppCompatActivity() {
         toolbar = findViewById(R.id.toolbar)
         web = findViewById(R.id.web)
         swipeRefresh = findViewById(R.id.swipeRefresh)
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (this@MainActivity::web.isInitialized && web.canGoBack()) {
+                    web.goBack()
+                    return
+                }
+                isEnabled = false
+                onBackPressedDispatcher.onBackPressed()
+                isEnabled = true
+            }
+        })
 
         toolbar.setOnMenuItemClickListener { item ->
             when (item.itemId) {
@@ -536,9 +548,5 @@ class MainActivity : AppCompatActivity() {
         }
 
         dialog.show()
-    }
-
-    override fun onBackPressed() {
-        if (this::web.isInitialized && web.canGoBack()) web.goBack() else super.onBackPressed()
     }
 }
