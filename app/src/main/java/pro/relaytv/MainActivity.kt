@@ -347,19 +347,88 @@ class MainActivity : AppCompatActivity() {
         val btnEdit = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnEdit)
         val btnRemove = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnRemove)
         val btnDiscover = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnDiscover)
+        val txtActiveServer = view.findViewById<android.widget.TextView>(R.id.txtActiveServer)
 
-        fun refresh(selectionId: String? = HostStore.getActiveHostId(this)) {
+        val hostStatuses = mutableMapOf<String, String>()
+        val statusChecksInFlight = mutableSetOf<String>()
+        lateinit var refresh: (String?) -> Unit
+
+        fun selectedHostIdFromList(): String? {
             val hosts = HostStore.loadHosts(this)
-            val labels = hosts.map { "${it.name}  •  ${it.baseUrl}" }
-            list.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_single_choice, labels)
+            val pos = list.checkedItemPosition
+            return hosts.getOrNull(pos)?.id
+        }
+
+        fun renderActiveServer(selectionId: String?) {
+            val hosts = HostStore.loadHosts(this)
+            val active = hosts.firstOrNull { it.id == selectionId }
+                ?: hosts.firstOrNull { it.id == HostStore.getActiveHostId(this) }
+                ?: hosts.firstOrNull()
+            txtActiveServer.text = if (active != null) {
+                "${active.name}\n${active.baseUrl}"
+            } else {
+                getString(R.string.no_server_selected)
+            }
+        }
+
+        fun statusLabelFor(host: RelayHost): String {
+            return hostStatuses[host.id] ?: getString(R.string.status_checking)
+        }
+
+        fun scheduleHostStatusCheck(host: RelayHost) {
+            if (statusChecksInFlight.contains(host.id)) return
+            if (hostStatuses.containsKey(host.id)) return
+            statusChecksInFlight.add(host.id)
+            hostStatuses[host.id] = getString(R.string.status_checking)
+
+            val req = Net.get(host.baseUrl.trimEnd('/') + "/health")
+            Net.client.newCall(req).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    runOnUiThread {
+                        statusChecksInFlight.remove(host.id)
+                        hostStatuses[host.id] = getString(R.string.status_offline)
+                        refresh(selectedHostIdFromList() ?: HostStore.getActiveHostId(this@MainActivity))
+                    }
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    val ok = response.use { it.isSuccessful }
+                    runOnUiThread {
+                        statusChecksInFlight.remove(host.id)
+                        hostStatuses[host.id] = if (ok) {
+                            getString(R.string.status_online)
+                        } else {
+                            getString(R.string.status_offline)
+                        }
+                        refresh(selectedHostIdFromList() ?: HostStore.getActiveHostId(this@MainActivity))
+                    }
+                }
+            })
+        }
+
+        refresh = { selectionIdInput ->
+            val selectionId = selectionIdInput ?: HostStore.getActiveHostId(this)
+            val hosts = HostStore.loadHosts(this)
+            val activeId = HostStore.getActiveHostId(this)
+            val labels = hosts.map { host ->
+                val prefix = if (host.id == activeId) {
+                    getString(R.string.status_active_prefix) + " • "
+                } else {
+                    ""
+                }
+                "${host.name}  •  ${prefix}${statusLabelFor(host)}\n${host.baseUrl}"
+            }
+            list.adapter = ArrayAdapter(this, R.layout.item_server_picker_choice, android.R.id.text1, labels)
             list.choiceMode = ListView.CHOICE_MODE_SINGLE
             val idx = hosts.indexOfFirst { it.id == selectionId }.let { if (it >= 0) it else 0 }
             if (hosts.isNotEmpty()) list.setItemChecked(idx, true)
             btnEdit.isEnabled = hosts.isNotEmpty()
             btnRemove.isEnabled = hosts.isNotEmpty()
+            renderActiveServer(selectionId)
+            hosts.forEach { scheduleHostStatusCheck(it) }
         }
 
-        refresh()
+        refresh(HostStore.getActiveHostId(this))
         btnDiscover.text = getString(R.string.scan_lan)
 
         val dialog = MaterialAlertDialogBuilder(this)
@@ -411,6 +480,8 @@ class MainActivity : AppCompatActivity() {
                         val host = upsertDiscoveredServer(selected)
                         HostStore.setActiveHostId(this@MainActivity, host.id)
                         toolbar.subtitle = host.name
+                        hostStatuses.remove(host.id)
+                        statusChecksInFlight.remove(host.id)
                         refresh(host.id)
                         loadServerBase(host.baseUrl, forcePickerOnFailure = false, manualRefresh = false)
                         dialog.dismiss()
@@ -431,6 +502,7 @@ class MainActivity : AppCompatActivity() {
             val hosts = HostStore.loadHosts(this)
             val chosen = hosts.getOrNull(position) ?: return@setOnItemClickListener
             toolbar.subtitle = chosen.name
+            renderActiveServer(chosen.id)
         }
         fun showAddEdit(existing: RelayHost? = null) {
             val nameInput = EditText(this).apply {
@@ -506,6 +578,8 @@ class MainActivity : AppCompatActivity() {
                                 }
 
                                 HostStore.setActiveHostId(this@MainActivity, host.id)
+                                hostStatuses.remove(host.id)
+                                statusChecksInFlight.remove(host.id)
                                 refresh(host.id)
                                 dlg.dismiss()
                             }
@@ -537,7 +611,8 @@ class MainActivity : AppCompatActivity() {
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Remove") { _, _ ->
                     HostStore.remove(this, existing.id)
-                    refresh()
+                    hostStatuses.remove(existing.id)
+                    refresh(HostStore.getActiveHostId(this))
                 }
                 .show()
         }

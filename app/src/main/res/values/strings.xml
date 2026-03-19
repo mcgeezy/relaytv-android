@@ -14,4 +14,11 @@
     <string name="discovered_servers">Discovered RelayTV Servers</string>
     <string name="discovery_none">No RelayTV servers found on your network.</string>
     <string name="discovery_failed">LAN discovery failed.</string>
+    <string name="server_picker_subtitle">Choose a server. Health status updates automatically.</string>
+    <string name="active_server">Active server</string>
+    <string name="no_server_selected">No server selected</string>
+    <string name="status_online">Online</string>
+    <string name="status_offline">Offline</string>
+    <string name="status_checking">Checking…</string>
+    <string name="status_active_prefix">Active</string>
 </resources>
