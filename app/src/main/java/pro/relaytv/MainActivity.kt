@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.LayoutInflater
+import android.view.View
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -27,6 +28,9 @@ import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import com.google.android.material.appbar.AppBarLayout
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import okhttp3.Call
@@ -44,6 +48,7 @@ class MainActivity : AppCompatActivity() {
     private val connectivityManager by lazy { getSystemService(ConnectivityManager::class.java) }
 
     private lateinit var web: WebView
+    private lateinit var appBar: AppBarLayout
     private lateinit var toolbar: MaterialToolbar
 
     private var activeBaseUrl: String? = null
@@ -81,8 +86,10 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(R.layout.activity_main)
         val openServers = intent.getBooleanExtra("open_servers", false)
+        appBar = findViewById(R.id.appBar)
         toolbar = findViewById(R.id.toolbar)
         web = findViewById(R.id.web)
+        applyWindowInsets()
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (this@MainActivity::web.isInitialized && web.canGoBack()) {
@@ -151,6 +158,24 @@ class MainActivity : AppCompatActivity() {
         web.settings.domStorageEnabled = true
         web.settings.mediaPlaybackRequiresUserGesture = false
         web.settings.userAgentString = web.settings.userAgentString + " RelayTV/$versionName"
+    }
+
+    private fun applyWindowInsets() {
+        val initialTopPadding = appBar.paddingTop
+        val initialLeftPadding = appBar.paddingLeft
+        val initialRightPadding = appBar.paddingRight
+
+        ViewCompat.setOnApplyWindowInsetsListener(appBar) { view: View, insets: WindowInsetsCompat ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(
+                initialLeftPadding + systemBars.left,
+                initialTopPadding + systemBars.top,
+                initialRightPadding + systemBars.right,
+                view.paddingBottom
+            )
+            insets
+        }
+        ViewCompat.requestApplyInsets(appBar)
     }
 
     private fun openPrivacyPolicy() {
