@@ -55,6 +55,13 @@ Release bundle and release lint:
 ./scripts/build-release.sh
 ```
 
+GitHub release assets are generated automatically when you push a tag like:
+
+```bash
+git tag v1.2.0
+git push origin v1.2.0
+```
+
 Connected tests on a physical device or emulator:
 
 ```bash
