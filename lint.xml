@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <issue id="GradleDependency" severity="ignore" />
+    <issue id="IconDuplicates" severity="ignore" />
+    <issue id="IconLauncherShape" severity="ignore" />
+</lint>

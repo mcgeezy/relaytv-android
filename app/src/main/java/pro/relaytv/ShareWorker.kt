@@ -5,7 +5,6 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.work.Worker
 import androidx.work.WorkerParameters
@@ -16,6 +15,7 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
     companion object {
         const val KEY_BASE = "base"
         const val KEY_URL = "url"
+        const val KEY_ENDPOINT_PATH = "endpoint_path"
         private const val CHANNEL_ID = "relaytv_silent"
         private const val NOTIF_ID = 4242
     }
@@ -23,9 +23,10 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
     override fun doWork(): Result {
         val base = inputData.getString(KEY_BASE)?.trim()?.trimEnd('/') ?: return Result.failure()
         val url = inputData.getString(KEY_URL) ?: return Result.failure()
+        val endpointPath = inputData.getString(KEY_ENDPOINT_PATH)?.trim()?.ifBlank { "/smart" } ?: "/smart"
         return try {
             val payload = JSONObject().put("url", url).toString()
-            val req = Net.postJson(base + "/smart", payload)
+            val req = Net.postJson(base + endpointPath, payload)
 
             Net.client.newCall(req).execute().use { resp ->
                 val body = resp.body?.string().orEmpty()
@@ -57,10 +58,8 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
     private fun postNotification(title: String, text: String, tapToOpen: Boolean) {
         val nm = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val ch = NotificationChannel(CHANNEL_ID, "RelayTV", NotificationManager.IMPORTANCE_LOW)
-            nm.createNotificationChannel(ch)
-        }
+        val ch = NotificationChannel(CHANNEL_ID, "RelayTV", NotificationManager.IMPORTANCE_LOW)
+        nm.createNotificationChannel(ch)
 
         val builder = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
@@ -78,7 +77,7 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
                 applicationContext,
                 0,
                 openIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0)
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             builder.setContentIntent(pending)
         }

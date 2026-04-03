@@ -11,4 +11,8 @@
         android:title="@string/reload"
         android:icon="@android:drawable/ic_popup_sync"
         app:showAsAction="ifRoom" />
+    <item
+        android:id="@+id/action_privacy"
+        android:title="@string/privacy_policy"
+        app:showAsAction="never" />
 </menu>

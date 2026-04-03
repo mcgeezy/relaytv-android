@@ -7,6 +7,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 failures=0
 warnings=0
+ANDROID_PLATFORM="${ANDROID_PLATFORM:-android-35}"
+ANDROID_BUILD_TOOLS="${ANDROID_BUILD_TOOLS:-35.0.0}"
 
 say() { printf '%s\n' "$*"; }
 ok() { say "[ok] $*"; }
@@ -89,6 +91,20 @@ check_sdk() {
         ok "Found sdkmanager at ${sdk_root}/cmdline-tools/latest/bin/sdkmanager"
     else
         warn "sdkmanager not found in PATH or ${sdk_root}/cmdline-tools/latest/bin."
+    fi
+
+    if [[ -n "${sdk_root}" ]]; then
+        if [[ -d "${sdk_root}/platforms/${ANDROID_PLATFORM}" ]]; then
+            ok "Found Android platform: ${ANDROID_PLATFORM}"
+        else
+            fail "Missing Android platform: ${ANDROID_PLATFORM}"
+        fi
+
+        if [[ -d "${sdk_root}/build-tools/${ANDROID_BUILD_TOOLS}" ]]; then
+            ok "Found Android build-tools: ${ANDROID_BUILD_TOOLS}"
+        else
+            fail "Missing Android build-tools: ${ANDROID_BUILD_TOOLS}"
+        fi
     fi
 }
 

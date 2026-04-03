@@ -5,9 +5,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 INSTALL_EMULATOR="${INSTALL_EMULATOR:-0}"
-ANDROID_PLATFORM="${ANDROID_PLATFORM:-android-34}"
-ANDROID_BUILD_TOOLS="${ANDROID_BUILD_TOOLS:-34.0.0}"
-ANDROID_SYSTEM_IMAGE="${ANDROID_SYSTEM_IMAGE:-system-images;android-34;google_apis;x86_64}"
+ANDROID_PLATFORM="${ANDROID_PLATFORM:-android-35}"
+ANDROID_BUILD_TOOLS="${ANDROID_BUILD_TOOLS:-35.0.0}"
+ANDROID_SYSTEM_IMAGE="${ANDROID_SYSTEM_IMAGE:-system-images;android-35;google_apis;x86_64}"
 
 say() { printf '%s\n' "$*"; }
 

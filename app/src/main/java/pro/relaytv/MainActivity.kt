@@ -1,10 +1,12 @@
 package pro.relaytv
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -25,7 +27,6 @@ import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
-import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import okhttp3.Call
@@ -44,7 +45,6 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var web: WebView
     private lateinit var toolbar: MaterialToolbar
-    private lateinit var swipeRefresh: SwipeRefreshLayout
 
     private var activeBaseUrl: String? = null
     private var consecutiveHealthFailures = 0
@@ -83,7 +83,6 @@ class MainActivity : AppCompatActivity() {
         val openServers = intent.getBooleanExtra("open_servers", false)
         toolbar = findViewById(R.id.toolbar)
         web = findViewById(R.id.web)
-        swipeRefresh = findViewById(R.id.swipeRefresh)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (this@MainActivity::web.isInitialized && web.canGoBack()) {
@@ -106,29 +105,25 @@ class MainActivity : AppCompatActivity() {
                     loadActiveServer(forcePickerOnFailure = false, manualRefresh = true)
                     true
                 }
+                R.id.action_privacy -> {
+                    openPrivacyPolicy()
+                    true
+                }
                 else -> false
             }
         }
 
-        web.settings.javaScriptEnabled = true
-        web.settings.domStorageEnabled = true
-        web.settings.mediaPlaybackRequiresUserGesture = false
-        web.settings.userAgentString = web.settings.userAgentString + " RelayTV/1.1.0"
-        swipeRefresh.setOnRefreshListener {
-            loadActiveServer(forcePickerOnFailure = false, manualRefresh = true)
-        }
+        configureWebView()
 
         web.webChromeClient = WebChromeClient()
         web.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String) {
                 mainFrameFailed = false
-                swipeRefresh.isRefreshing = false
             }
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 if (request.isForMainFrame) {
                     mainFrameFailed = true
-                    swipeRefresh.isRefreshing = false
                     Toast.makeText(this@MainActivity, "Connection lost. Retrying…", Toast.LENGTH_SHORT).show()
                     scheduleHeartbeat(1_500)
                 }
@@ -145,6 +140,26 @@ class MainActivity : AppCompatActivity() {
             return
         }
         loadServerBase(base.trimEnd('/'), forcePickerOnFailure = true, manualRefresh = false)
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun configureWebView() {
+        val versionName = runCatching {
+            packageManager.getPackageInfo(packageName, 0).versionName
+        }.getOrNull() ?: "dev"
+        web.settings.javaScriptEnabled = true
+        web.settings.domStorageEnabled = true
+        web.settings.mediaPlaybackRequiresUserGesture = false
+        web.settings.userAgentString = web.settings.userAgentString + " RelayTV/$versionName"
+    }
+
+    private fun openPrivacyPolicy() {
+        val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.privacy_policy_url)))
+        runCatching {
+            startActivity(browserIntent)
+        }.onFailure {
+            Toast.makeText(this, getString(R.string.privacy_open_failed), Toast.LENGTH_SHORT).show()
+        }
     }
 
     override fun onResume() {
@@ -173,13 +188,9 @@ class MainActivity : AppCompatActivity() {
     private fun loadServerBase(base: String, forcePickerOnFailure: Boolean, manualRefresh: Boolean) {
         val normalized = base.trimEnd('/')
         if (normalized.isBlank()) {
-            swipeRefresh.isRefreshing = false
             return
         }
         activeBaseUrl = normalized
-        if (manualRefresh || !initialLoadComplete) {
-            swipeRefresh.isRefreshing = true
-        }
         probeServerHealth(
             base = normalized,
             forcePickerOnFailure = forcePickerOnFailure,
@@ -191,7 +202,6 @@ class MainActivity : AppCompatActivity() {
     private fun loadActiveServer(forcePickerOnFailure: Boolean, manualRefresh: Boolean) {
         val base = activeBaseUrl ?: HostStore.getActiveBaseUrl(this)?.trimEnd('/')
         if (base.isNullOrBlank()) {
-            swipeRefresh.isRefreshing = false
             showServerPicker(force = true)
             return
         }
@@ -248,7 +258,6 @@ class MainActivity : AppCompatActivity() {
 
                     mainFrameFailed = false
                     initialLoadComplete = true
-                    swipeRefresh.isRefreshing = false
                     scheduleHeartbeat(HEARTBEAT_OK_MS)
                 }
             }
@@ -257,7 +266,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun onServerHealthFailed(forcePickerOnFailure: Boolean, manualRefresh: Boolean) {
         consecutiveHealthFailures += 1
-        swipeRefresh.isRefreshing = false
 
         if (forcePickerOnFailure && !initialLoadComplete) {
             Toast.makeText(this, "Server not reachable. Switch servers.", Toast.LENGTH_LONG).show()

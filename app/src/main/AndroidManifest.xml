@@ -6,7 +6,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -26,18 +28,60 @@
 
         <activity
             android:name=".ShareActivity"
-            android:exported="true"
+            android:exported="false"
             android:excludeFromRecents="true"
             android:finishOnTaskLaunch="true"
             android:taskAffinity=""
             android:launchMode="singleTask"
+            android:theme="@android:style/Theme.NoDisplay"/>
+
+        <activity-alias
+            android:name=".ShareQueueAlias"
+            android:targetActivity=".ShareActivity"
+            android:exported="true"
+            android:enabled="true"
+            android:excludeFromRecents="true"
+            android:finishOnTaskLaunch="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask"
+            android:label="@string/share_queue_label"
             android:theme="@android:style/Theme.NoDisplay">
+            <meta-data
+                android:name="pro.relaytv.SHARE_ENDPOINT_PATH"
+                android:value="/smart" />
+            <meta-data
+                android:name="pro.relaytv.SHARE_SUCCESS_TEMPLATE"
+                android:value="@string/share_queue_toast" />
             <intent-filter>
                 <action android:name="android.intent.action.SEND"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <data android:mimeType="text/plain"/>
             </intent-filter>
-        </activity>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".SharePlayNowAlias"
+            android:targetActivity=".ShareActivity"
+            android:exported="true"
+            android:enabled="true"
+            android:excludeFromRecents="true"
+            android:finishOnTaskLaunch="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask"
+            android:label="@string/share_play_now_label"
+            android:theme="@android:style/Theme.NoDisplay">
+            <meta-data
+                android:name="pro.relaytv.SHARE_ENDPOINT_PATH"
+                android:value="/play_now" />
+            <meta-data
+                android:name="pro.relaytv.SHARE_SUCCESS_TEMPLATE"
+                android:value="@string/share_play_now_toast" />
+            <intent-filter>
+                <action android:name="android.intent.action.SEND"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="text/plain"/>
+            </intent-filter>
+        </activity-alias>
 
         <activity
             android:name=".SettingsActivity"

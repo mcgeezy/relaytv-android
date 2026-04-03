@@ -1,207 +1,90 @@
-# 📺 RelayTV Android Remote
+# RelayTV Android Remote
 
-**RelayTV Android** is the official companion remote app for
-**RelayTV**, a powerful local-first media relay and playback system.
+RelayTV Android is the Android companion app for the self-hosted RelayTV server. It gives you a lightweight remote, embedded `/ui` access, multi-server management, and Android share targets for queueing or immediately playing links on a RelayTV box.
 
-Control, launch, and share content to your RelayTV server instantly from
-Android --- with multi-server support and seamless share integration.
-
-------------------------------------------------------------------------
-
-## 🚀 What is RelayTV?
-
-RelayTV is a local media relay and playback server designed for:
-
--   YouTube & streaming links
--   Direct media URLs
--   Queue management
--   HDMI playback (mpv-based)
--   LAN-first operation
--   Smart `/smart` auto-routing endpoint
-
-🔗 RelayTV Server:\
+RelayTV server:
 https://github.com/mcgeezy/relaytv
 
-🔗 Home Assistant Integration:\
+Home Assistant integration:
 https://github.com/mcgeezy/relaytv-ha
 
-------------------------------------------------------------------------
+## Features
 
-# ✨ Features
+- Multi-server support with health verification before save
+- LAN auto-discovery of `_relaytv._tcp` servers with Android NSD / mDNS
+- Embedded RelayTV `/ui` WebView with reconnect and heartbeat recovery
+- Dedicated Android share targets:
+  - `RelayTV Queue` -> `POST /smart`
+  - `RelayTV Play` -> `POST /play_now`
+- HTTP and HTTPS support for self-hosted RelayTV servers
 
-## 📡 Multi-Server Support
+## Requirements
 
--   Add unlimited RelayTV servers
--   Name each server (Living Room, Office, Bedroom, etc.)
--   Instantly switch active server
--   Remove or edit servers anytime
--   Built-in `/health` verification before saving
+- Android 8.0+ (`minSdk 26`)
+- RelayTV server reachable on your LAN or via a trusted remote URL
 
-------------------------------------------------------------------------
-
-## 🔗 Share to RelayTV
-
--   Share any link from Android to RelayTV
-
--   Automatically sends to:
-
-    POST /smart
-
--   Smart endpoint handles play vs queue logic
-
--   Instant feedback toast:
-
-    Sent to "Living Room"
-
-------------------------------------------------------------------------
-
-## 🎨 Clean RelayTV UI
-
--   Material 3 design
--   Dark-mode optimized
--   RelayTV branding (electric blue + charcoal theme)
--   Quick server switch from toolbar
--   Pull-to-refresh WebView
-
-------------------------------------------------------------------------
-
-## 🧠 Smart URL Handling
-
--   Auto-normalizes URLs:
-    -   10.0.55.2:8787 → http://10.0.55.2:8787
--   Validates server before saving
--   Prevents crash loops from invalid input
-
-------------------------------------------------------------------------
-
-## 📱 WebView Relay Mode
-
-Loads:
-
-    /ui
-
-from the active server for full RelayTV interface access.
-
-------------------------------------------------------------------------
-
-# 🏗 Requirements
-
--   Android 8.0+
--   RelayTV server running locally or remotely
--   HTTP or HTTPS supported
-
-------------------------------------------------------------------------
-
-# 🔐 HTTPS Notes
-
-RelayTV supports both:
-
-    http://
-    https://
-
-For best compatibility:
-
--   Prefer HTTPS
--   Use a valid certificate (reverse proxy, Nginx Proxy Manager, etc.)
--   Or use HTTP on trusted LAN environments
-
-------------------------------------------------------------------------
-
-# 🛠 Build Instructions
-
-Clone:
-
-    git clone https://github.com/mcgeezy/relaytv-android.git
-    cd relaytv-android
-
-Debug build:
-
-    ./gradlew assembleDebug
-
-Release bundle (for Play):
-
-    ./gradlew bundleRelease
-
-------------------------------------------------------------------------
-
-## 🔧 Local Build/Test Scripts
+## Build And Test
 
 Validate host environment:
 
-    ./scripts/check-android-env.sh all
+```bash
+./scripts/check-android-env.sh all
+```
 
-Install SDK components (requires sdkmanager):
+Install or refresh Android SDK components:
 
-    ./scripts/bootstrap-android.sh
+```bash
+./scripts/bootstrap-android.sh
+```
 
-Build + lint + unit tests:
+Debug build, lint, and unit tests:
 
-    ./scripts/build-debug.sh
+```bash
+./scripts/build-debug.sh
+```
 
-Connected/device tests:
+Release bundle and release lint:
 
-    ./scripts/test-connected.sh
+```bash
+./scripts/build-release.sh
+```
 
-------------------------------------------------------------------------
+Connected tests on a physical device or emulator:
 
-# 📦 Play Store Ready
+```bash
+./scripts/test-connected.sh
+```
 
-Release build includes:
+## Release Notes
 
--   Resource shrinking
--   Code minification
--   Material 3 theming
--   Clean package namespace
+- Current Play target: Android 15 / API 35
+- Release bundle output: `app/build/outputs/bundle/release/app-release.aab`
+- Release checklist: [docs/RELEASE_CHECKLIST.md](/opt/dev/relaytv-android/docs/RELEASE_CHECKLIST.md)
+- Privacy policy draft: [docs/PRIVACY_POLICY.md](/opt/dev/relaytv-android/docs/PRIVACY_POLICY.md)
 
-Before Play upload:
+## Network Notes
 
--   Configure signing keystore
--   Increment versionCode
--   Generate .aab
+RelayTV Android intentionally supports both:
 
-------------------------------------------------------------------------
+- `http://`
+- `https://`
 
-# 🏠 Home Assistant Integration
+HTTP support is retained because RelayTV is commonly deployed as a trusted LAN-first service on local IPs and hostnames. If your server is reachable outside your private network, use HTTPS.
 
-RelayTV integrates directly with Home Assistant via:
+## API Surface Used By The App
 
-https://github.com/mcgeezy/relaytv-ha
+- `GET /health`
+- `GET /ui`
+- `POST /smart`
+- `POST /play_now`
 
-Features include:
+## Contributing
 
--   Media player entity
--   Queue control
--   Playback control
--   Side panel iframe UI
--   Multi-server support
+- Keep Android UX aligned with RelayTV’s self-hosted, local-first model
+- Preserve the queue vs play-now share behavior
+- Avoid regressions in reconnect and server discovery flows
 
-------------------------------------------------------------------------
+## License
 
-# 🔄 API Reference
-
-RelayTV Android primarily uses:
-
-    POST /smart
-    GET  /health
-    GET  /ui
-
-Full API reference available in:
-
+Same license as the RelayTV core project:
 https://github.com/mcgeezy/relaytv
-
-------------------------------------------------------------------------
-
-# 🤝 Contributing
-
-Contributions welcome!
-
--   Keep UI consistent with RelayTV branding
--   Maintain `/smart` routing behavior
--   Preserve multi-server architecture
-
-------------------------------------------------------------------------
-
-# 📄 License
-
-Same license as RelayTV core project.\
-See: https://github.com/mcgeezy/relaytv
