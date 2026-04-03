@@ -43,6 +43,12 @@ Debug build, lint, and unit tests:
 ./scripts/build-debug.sh
 ```
 
+Debug APK output:
+
+```text
+app/build/outputs/apk/debug/app-debug.apk
+```
+
 Release bundle and release lint:
 
 ```bash
@@ -59,8 +65,8 @@ Connected tests on a physical device or emulator:
 
 - Current Play target: Android 15 / API 35
 - Release bundle output: `app/build/outputs/bundle/release/app-release.aab`
-- Release checklist: [docs/RELEASE_CHECKLIST.md](/opt/dev/relaytv-android/docs/RELEASE_CHECKLIST.md)
-- Privacy policy draft: [docs/PRIVACY_POLICY.md](/opt/dev/relaytv-android/docs/PRIVACY_POLICY.md)
+- Release checklist: [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
+- Privacy policy draft: [docs/PRIVACY_POLICY.md](docs/PRIVACY_POLICY.md)
 
 ## Network Notes
 
