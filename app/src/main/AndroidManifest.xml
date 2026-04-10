@@ -33,7 +33,7 @@
             android:finishOnTaskLaunch="true"
             android:taskAffinity=""
             android:launchMode="singleTask"
-            android:theme="@android:style/Theme.NoDisplay"/>
+            android:theme="@style/Theme.RelayTV.Share"/>
 
         <activity-alias
             android:name=".ShareQueueAlias"
@@ -45,7 +45,7 @@
             android:taskAffinity=""
             android:launchMode="singleTask"
             android:label="@string/share_queue_label"
-            android:theme="@android:style/Theme.NoDisplay">
+            android:theme="@style/Theme.RelayTV.Share">
             <meta-data
                 android:name="pro.relaytv.SHARE_ENDPOINT_PATH"
                 android:value="/smart" />
@@ -56,6 +56,7 @@
                 <action android:name="android.intent.action.SEND"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <data android:mimeType="text/plain"/>
+                <data android:mimeType="video/*"/>
             </intent-filter>
         </activity-alias>
 
@@ -69,7 +70,7 @@
             android:taskAffinity=""
             android:launchMode="singleTask"
             android:label="@string/share_play_now_label"
-            android:theme="@android:style/Theme.NoDisplay">
+            android:theme="@style/Theme.RelayTV.Share">
             <meta-data
                 android:name="pro.relaytv.SHARE_ENDPOINT_PATH"
                 android:value="/play_now" />
@@ -80,6 +81,7 @@
                 <action android:name="android.intent.action.SEND"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <data android:mimeType="text/plain"/>
+                <data android:mimeType="video/*"/>
             </intent-filter>
         </activity-alias>
 
