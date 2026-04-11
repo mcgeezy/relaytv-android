@@ -7,6 +7,7 @@ import android.database.Cursor
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.work.Data
@@ -18,18 +19,37 @@ import java.util.UUID
 class ShareActivity : AppCompatActivity() {
 
     companion object {
+        private const val TAG = "RelayTVShare"
         private const val META_ENDPOINT_PATH = "pro.relaytv.SHARE_ENDPOINT_PATH"
         private const val META_SUCCESS_TEMPLATE = "pro.relaytv.SHARE_SUCCESS_TEMPLATE"
-        private val SUPPORTED_VIDEO_MIME_TYPES = setOf("video/mp4", "video/webm")
+        private val SUPPORTED_MEDIA_MIME_TYPES = setOf(
+            "application/octet-stream",
+            "application/ogg",
+            "audio/aac",
+            "audio/flac",
+            "audio/m4a",
+            "audio/mpeg",
+            "audio/mp4",
+            "audio/ogg",
+            "audio/opus",
+            "audio/wav",
+            "audio/wave",
+            "audio/x-aac",
+            "audio/x-flac",
+            "audio/x-m4a",
+            "audio/x-wav",
+            "video/mp4",
+            "video/webm",
+        )
     }
 
     private sealed class SharePayload {
         data class RemoteUrl(val url: String) : SharePayload()
-        data class LocalVideo(val filePath: String, val mimeType: String, val title: String) : SharePayload()
+        data class LocalMedia(val filePath: String, val mimeType: String, val title: String) : SharePayload()
     }
 
-    private data class LocalVideoStageResult(
-        val payload: SharePayload.LocalVideo? = null,
+    private data class LocalMediaStageResult(
+        val payload: SharePayload.LocalMedia? = null,
         val errorMessageResId: Int? = null,
     )
 
@@ -52,7 +72,7 @@ class ShareActivity : AppCompatActivity() {
         val streamUri = extractStreamUri()
         if (streamUri != null) {
             Thread {
-                val result = stageLocalVideo(streamUri)
+                val result = stageLocalMedia(streamUri)
                 runOnUiThread {
                     if (result.payload != null) {
                         dispatchPayload(base, endpointPath, successTemplate, result.payload)
@@ -82,11 +102,11 @@ class ShareActivity : AppCompatActivity() {
 
         val toastTemplate = when (payload) {
             is SharePayload.RemoteUrl -> successTemplate
-            is SharePayload.LocalVideo -> {
+            is SharePayload.LocalMedia -> {
                 if (endpointPath == "/play_now") {
-                    getString(R.string.share_video_play_started)
+                    getString(R.string.share_media_play_started)
                 } else {
-                    getString(R.string.share_video_queue_started)
+                    getString(R.string.share_media_queue_started)
                 }
             }
         }
@@ -95,7 +115,7 @@ class ShareActivity : AppCompatActivity() {
             is SharePayload.RemoteUrl -> {
                 inputBuilder.putString(ShareWorker.KEY_URL, payload.url)
             }
-            is SharePayload.LocalVideo -> {
+            is SharePayload.LocalMedia -> {
                 inputBuilder
                     .putString(ShareWorker.KEY_UPLOAD_FILE_PATH, payload.filePath)
                     .putString(ShareWorker.KEY_UPLOAD_MIME_TYPE, payload.mimeType)
@@ -139,21 +159,20 @@ class ShareActivity : AppCompatActivity() {
         return extra
     }
 
-    private fun stageLocalVideo(uri: Uri): LocalVideoStageResult {
-        val mimeType = contentResolver.getType(uri)
+    private fun stageLocalMedia(uri: Uri): LocalMediaStageResult {
+        val rawMimeType = contentResolver.getType(uri)
             ?.substringBefore(';')
             ?.trim()
             ?.lowercase()
             ?: ""
         val displayName = queryDisplayName(uri)
-        val inferredMimeType = when {
-            mimeType.isNotBlank() -> mimeType
-            displayName.endsWith(".mp4", ignoreCase = true) || displayName.endsWith(".m4v", ignoreCase = true) -> "video/mp4"
-            displayName.endsWith(".webm", ignoreCase = true) -> "video/webm"
-            else -> ""
-        }
-        if (inferredMimeType !in SUPPORTED_VIDEO_MIME_TYPES) {
-            return LocalVideoStageResult(errorMessageResId = R.string.share_video_unsupported)
+        val inferredMimeType = normalizeSharedMimeType(rawMimeType, displayName)
+        Log.i(
+            TAG,
+            "stageLocalMedia uri=$uri rawMime=$rawMimeType inferredMime=$inferredMimeType displayName=$displayName"
+        )
+        if (inferredMimeType !in SUPPORTED_MEDIA_MIME_TYPES) {
+            return LocalMediaStageResult(errorMessageResId = R.string.share_media_unsupported)
         }
 
         val staged = runCatching {
@@ -161,12 +180,12 @@ class ShareActivity : AppCompatActivity() {
         }.getOrNull()
 
         if (staged == null) {
-            return LocalVideoStageResult(errorMessageResId = R.string.share_video_read_failed)
+            return LocalMediaStageResult(errorMessageResId = R.string.share_media_read_failed)
         }
 
         val title = staged.nameWithoutExtension.ifBlank { displayName.substringBeforeLast('.', displayName) }
-        return LocalVideoStageResult(
-            payload = SharePayload.LocalVideo(
+        return LocalMediaStageResult(
+            payload = SharePayload.LocalMedia(
                 filePath = staged.absolutePath,
                 mimeType = inferredMimeType,
                 title = title
@@ -179,6 +198,13 @@ class ShareActivity : AppCompatActivity() {
         val dir = File(cacheDir, "shared-media").apply { mkdirs() }
         val ext = when {
             displayName.contains('.') -> ".${displayName.substringAfterLast('.')}"
+            mimeType == "audio/mpeg" -> ".mp3"
+            mimeType == "audio/mp4" || mimeType == "audio/m4a" || mimeType == "audio/x-m4a" -> ".m4a"
+            mimeType == "audio/aac" || mimeType == "audio/x-aac" -> ".aac"
+            mimeType == "audio/wav" || mimeType == "audio/wave" || mimeType == "audio/x-wav" -> ".wav"
+            mimeType == "audio/flac" || mimeType == "audio/x-flac" -> ".flac"
+            mimeType == "audio/ogg" || mimeType == "application/ogg" -> ".ogg"
+            mimeType == "audio/opus" -> ".opus"
             mimeType == "video/webm" -> ".webm"
             else -> ".mp4"
         }
@@ -208,6 +234,44 @@ class ShareActivity : AppCompatActivity() {
     private fun sanitizeFilename(name: String): String {
         val cleaned = name.trim().replace(Regex("[^A-Za-z0-9._-]+"), "-").trim('-', '.', '_')
         return if (cleaned.isBlank()) "relaytv-upload" else cleaned.take(96)
+    }
+
+    private fun normalizeSharedMimeType(rawMimeType: String, displayName: String): String {
+        val byExtension = when {
+            displayName.endsWith(".mp3", ignoreCase = true) -> "audio/mpeg"
+            displayName.endsWith(".m4a", ignoreCase = true) -> "audio/m4a"
+            displayName.endsWith(".aac", ignoreCase = true) -> "audio/aac"
+            displayName.endsWith(".wav", ignoreCase = true) -> "audio/wav"
+            displayName.endsWith(".flac", ignoreCase = true) -> "audio/flac"
+            displayName.endsWith(".ogg", ignoreCase = true) -> "application/ogg"
+            displayName.endsWith(".opus", ignoreCase = true) -> "audio/opus"
+            else -> ""
+        }
+        if (byExtension.isNotBlank()) return byExtension
+
+        val byMime = when (rawMimeType) {
+            "application/octet-stream" -> "application/octet-stream"
+            "application/ogg" -> "application/ogg"
+            "audio/aac", "audio/x-aac" -> "audio/aac"
+            "audio/flac", "audio/x-flac" -> "audio/flac"
+            "audio/m4a" -> "audio/m4a"
+            "audio/mpeg", "audio/mp3", "audio/x-mp3" -> "audio/mpeg"
+            "audio/mp4" -> "audio/mp4"
+            "audio/ogg" -> "audio/ogg"
+            "audio/opus" -> "audio/opus"
+            "audio/wav", "audio/wave", "audio/x-wav" -> "audio/wav"
+            "audio/x-m4a" -> "audio/x-m4a"
+            "video/mp4" -> "video/mp4"
+            "video/webm" -> "video/webm"
+            else -> ""
+        }
+        if (byMime.isNotBlank()) return byMime
+
+        return when {
+            displayName.endsWith(".mp4", ignoreCase = true) || displayName.endsWith(".m4v", ignoreCase = true) -> "video/mp4"
+            displayName.endsWith(".webm", ignoreCase = true) -> "video/webm"
+            else -> ""
+        }
     }
 
     private fun pruneStagedFiles() {

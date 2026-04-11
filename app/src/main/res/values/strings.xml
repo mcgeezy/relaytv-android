@@ -25,10 +25,10 @@
     <string name="share_play_now_label">RelayTV Play</string>
     <string name="share_queue_toast">Queued on "%s"</string>
     <string name="share_play_now_toast">Playing now on "%s"</string>
-    <string name="share_video_queue_started">Uploading video to "%s"</string>
-    <string name="share_video_play_started">Uploading video for playback on "%s"</string>
-    <string name="share_video_unsupported">Unsupported shared video. RelayTV currently accepts MP4 or WebM uploads.</string>
-    <string name="share_video_read_failed">Couldn\'t read the shared video from this app.</string>
+    <string name="share_media_queue_started">Uploading media to "%s"</string>
+    <string name="share_media_play_started">Uploading media for playback on "%s"</string>
+    <string name="share_media_unsupported">Unsupported shared media. RelayTV currently accepts MP3, M4A, AAC, WAV, FLAC, OGG, OPUS, MP4, or WebM uploads.</string>
+    <string name="share_media_read_failed">Couldn\'t read the shared media from this app.</string>
     <string name="privacy_policy">Privacy policy</string>
     <string name="privacy_policy_url">https://github.com/mcgeezy/relaytv-android/blob/main/docs/PRIVACY_POLICY.md</string>
     <string name="privacy_open_failed">No browser available to open the privacy policy.</string>

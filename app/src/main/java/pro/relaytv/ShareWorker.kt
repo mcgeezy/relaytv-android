@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.Worker
 import androidx.work.WorkerParameters
@@ -19,6 +20,7 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
     ) : Exception(message)
 
     companion object {
+        private const val TAG = "RelayTVShare"
         const val KEY_BASE = "base"
         const val KEY_URL = "url"
         const val KEY_ENDPOINT_PATH = "endpoint_path"
@@ -40,10 +42,21 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
             ?: "item"
 
         return try {
-            val url = when {
-                localUpload != null -> uploadMedia(base, localUpload)
-                else -> inputData.getString(KEY_URL) ?: return Result.failure()
+            if (localUpload != null && endpointPath == "/play_now") {
+                val playResult = uploadAndPlayMedia(base, localUpload)
+                postNotification(playResult.title, displayText, tapToOpen = true)
+                localUpload.delete()
+                return Result.success()
             }
+
+            if (localUpload != null) {
+                val enqueueResult = uploadAndEnqueueMedia(base, localUpload)
+                postNotification(enqueueResult.title, displayText, tapToOpen = true)
+                localUpload.delete()
+                return Result.success()
+            }
+
+            val url = inputData.getString(KEY_URL) ?: return Result.failure()
 
             val payload = JSONObject().put("url", url).toString()
             val req = Net.postJson(base + endpointPath, payload)
@@ -91,14 +104,24 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
         }
     }
 
-    private fun uploadMedia(base: String, file: File): String {
+    private data class UploadPlayResult(
+        val title: String,
+        val playbackMode: String,
+    )
+
+    private data class UploadEnqueueResult(
+        val title: String,
+    )
+
+    private fun uploadAndEnqueueMedia(base: String, file: File): UploadEnqueueResult {
         if (!file.exists() || !file.isFile) {
             throw ShareFailure("Shared media file is no longer available", retryable = false)
         }
         val mimeType = inputData.getString(KEY_UPLOAD_MIME_TYPE)?.trim().orEmpty()
         val title = inputData.getString(KEY_UPLOAD_TITLE)?.trim().orEmpty()
+        Log.i(TAG, "uploadAndEnqueueMedia file=${file.name} size=${file.length()} mime=$mimeType title=$title")
         val req = Net.postMultipartFile(
-            url = "$base/ingest/media",
+            url = "$base/ingest/media/enqueue",
             file = file,
             mimeType = mimeType.ifBlank { null },
             title = title.ifBlank { null },
@@ -106,15 +129,53 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
         Net.uploadClient.newCall(req).execute().use { resp ->
             val body = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) {
-                val detail = extractDetail(body) ?: "Upload failed"
+                Log.w(TAG, "uploadAndEnqueueMedia failed code=${resp.code} body=${body.take(300)}")
+                val detail = extractDetail(body) ?: "Upload enqueue failed"
                 throw ShareFailure(detail, retryable = shouldRetry(resp.code))
             }
+            Log.i(TAG, "uploadAndEnqueueMedia success code=${resp.code} body=${body.take(300)}")
             val json = JSONObject(body)
-            val uploadedUrl = json.optString("url").trim()
-            if (uploadedUrl.isBlank()) {
-                throw ShareFailure("Upload completed without a playable URL", retryable = false)
+            val result = json.optJSONObject("result")
+            val titleText = when (result?.optString("status")) {
+                "queued" -> "Enqueued"
+                else -> "Enqueued"
             }
-            return uploadedUrl
+            return UploadEnqueueResult(title = titleText)
+        }
+    }
+
+    private fun uploadAndPlayMedia(base: String, file: File): UploadPlayResult {
+        if (!file.exists() || !file.isFile) {
+            throw ShareFailure("Shared media file is no longer available", retryable = false)
+        }
+        val mimeType = inputData.getString(KEY_UPLOAD_MIME_TYPE)?.trim().orEmpty()
+        val title = inputData.getString(KEY_UPLOAD_TITLE)?.trim().orEmpty()
+        Log.i(TAG, "uploadAndPlayMedia file=${file.name} size=${file.length()} mime=$mimeType title=$title")
+        val req = Net.postMultipartFile(
+            url = "$base/ingest/media/play",
+            file = file,
+            mimeType = mimeType.ifBlank { null },
+            title = title.ifBlank { null },
+        )
+        Net.uploadClient.newCall(req).execute().use { resp ->
+            val body = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                Log.w(TAG, "uploadAndPlayMedia failed code=${resp.code} body=${body.take(300)}")
+                val detail = extractDetail(body) ?: "Upload playback failed"
+                throw ShareFailure(detail, retryable = shouldRetry(resp.code))
+            }
+            Log.i(TAG, "uploadAndPlayMedia success code=${resp.code} body=${body.take(300)}")
+            val json = JSONObject(body)
+            val playbackMode = json.optString("playback_mode").trim()
+            val message = when (playbackMode) {
+                "progressive" -> "Playing now"
+                "full_upload" -> "Playing now"
+                else -> "Playing now"
+            }
+            return UploadPlayResult(
+                title = message,
+                playbackMode = playbackMode,
+            )
         }
     }
 
