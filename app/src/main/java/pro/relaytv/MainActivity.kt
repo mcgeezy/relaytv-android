@@ -606,8 +606,11 @@ class MainActivity : AppCompatActivity() {
         list.setOnItemClickListener { _, _, position, _ ->
             val hosts = HostStore.loadHosts(this)
             val chosen = hosts.getOrNull(position) ?: return@setOnItemClickListener
+            HostStore.setActiveHostId(this, chosen.id)
             toolbar.subtitle = chosen.name
             renderActiveServer(chosen.id)
+            loadServerBase(chosen.baseUrl, forcePickerOnFailure = true, manualRefresh = false)
+            dialog.dismiss()
         }
         fun showAddEdit(existing: RelayHost? = null) {
             val nameInput = EditText(this).apply {
