@@ -2,6 +2,7 @@ package pro.relaytv
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
@@ -18,6 +19,7 @@ import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.ValueCallback
 import android.widget.ArrayAdapter
 import android.widget.LinearLayout
 import android.widget.EditText
@@ -44,6 +46,18 @@ class MainActivity : AppCompatActivity() {
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* no-op */ }
 
+    private val webFileChooser =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val callback = pendingWebFileCallback ?: return@registerForActivityResult
+            pendingWebFileCallback = null
+            val uris = if (result.resultCode == Activity.RESULT_OK) {
+                parseFileChooserResult(result.data)
+            } else {
+                null
+            }
+            callback.onReceiveValue(uris)
+        }
+
     private val uiHandler = Handler(Looper.getMainLooper())
     private val connectivityManager by lazy { getSystemService(ConnectivityManager::class.java) }
 
@@ -59,6 +73,7 @@ class MainActivity : AppCompatActivity() {
     private var networkCallbackRegistered = false
     private var isInForeground = false
     private var mdnsScanner: NsdRelayTvScanner? = null
+    private var pendingWebFileCallback: ValueCallback<Array<Uri>>? = null
 
     private val heartbeatRunnable = Runnable { runHeartbeat() }
 
@@ -122,7 +137,27 @@ class MainActivity : AppCompatActivity() {
 
         configureWebView()
 
-        web.webChromeClient = WebChromeClient()
+        web.webChromeClient = object : WebChromeClient() {
+            override fun onShowFileChooser(
+                webView: WebView,
+                filePathCallback: ValueCallback<Array<Uri>>,
+                fileChooserParams: FileChooserParams
+            ): Boolean {
+                pendingWebFileCallback?.onReceiveValue(null)
+                pendingWebFileCallback = filePathCallback
+
+                val intent = buildFileChooserIntent(fileChooserParams)
+                return try {
+                    webFileChooser.launch(intent)
+                    true
+                } catch (_: Exception) {
+                    pendingWebFileCallback = null
+                    filePathCallback.onReceiveValue(null)
+                    Toast.makeText(this@MainActivity, getString(R.string.file_picker_open_failed), Toast.LENGTH_SHORT).show()
+                    false
+                }
+            }
+        }
         web.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String) {
                 mainFrameFailed = false
@@ -147,6 +182,43 @@ class MainActivity : AppCompatActivity() {
             return
         }
         loadServerBase(base.trimEnd('/'), forcePickerOnFailure = true, manualRefresh = false)
+    }
+
+    private fun buildFileChooserIntent(fileChooserParams: WebChromeClient.FileChooserParams): Intent {
+        val acceptTypes = fileChooserParams.acceptTypes
+            .orEmpty()
+            .flatMap { it.split(",") }
+            .map { it.trim().lowercase() }
+            .filter { it.isNotBlank() }
+        val mimeTypes = acceptTypes
+            .filter { !it.startsWith(".") && "/" in it }
+            .distinct()
+            .ifEmpty { listOf("*/*") }
+            .toTypedArray()
+
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = if (mimeTypes.size == 1) mimeTypes.first() else "*/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes)
+            putExtra(
+                Intent.EXTRA_ALLOW_MULTIPLE,
+                fileChooserParams.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE
+            )
+        }
+
+        return Intent.createChooser(intent, fileChooserParams.title ?: getString(R.string.select_file))
+    }
+
+    private fun parseFileChooserResult(data: Intent?): Array<Uri>? {
+        if (data == null) return null
+        val clipData = data.clipData
+        if (clipData != null && clipData.itemCount > 0) {
+            return Array(clipData.itemCount) { index -> clipData.getItemAt(index).uri }
+                .filterNotNull()
+                .takeIf { it.isNotEmpty() }
+                ?.toTypedArray()
+        }
+        return data.data?.let { arrayOf(it) }
     }
 
     @SuppressLint("SetJavaScriptEnabled")

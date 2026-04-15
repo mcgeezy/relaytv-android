@@ -9,6 +9,8 @@
     <string name="server_name">Name</string>
     <string name="server_url">Base URL</string>
     <string name="reload">Reload</string>
+    <string name="select_file">Select file</string>
+    <string name="file_picker_open_failed">Couldn\'t open file picker.</string>
     <string name="scan_lan">Scan LAN</string>
     <string name="scanning_lan">Scanning LAN…</string>
     <string name="discovered_servers">Discovered RelayTV Servers</string>
@@ -21,8 +23,8 @@
     <string name="status_offline">Offline</string>
     <string name="status_checking">Checking…</string>
     <string name="status_active_prefix">Active</string>
-    <string name="share_queue_label">RelayTV Queue</string>
-    <string name="share_play_now_label">RelayTV Play</string>
+    <string name="share_queue_label">Queue</string>
+    <string name="share_play_now_label">Play</string>
     <string name="share_queue_toast">Queued on "%s"</string>
     <string name="share_play_now_toast">Playing now on "%s"</string>
     <string name="share_media_queue_started">Uploading media to "%s"</string>
