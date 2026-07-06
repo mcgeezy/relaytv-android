@@ -29,10 +29,14 @@ Use this checklist before cutting a public release or uploading a new Play Conso
    - `app/build/outputs/bundle/release/app-release.aab`
 3. Use Play App Signing in Play Console.
 4. Complete the Data safety form for this release.
+   - The media controls feature adds no off-device data collection; no Data safety changes are expected.
 5. Provide a valid support email in Play Console.
 6. Publish a public privacy policy URL.
    - This repo includes a draft policy in `docs/PRIVACY_POLICY.md`.
    - The in-app privacy menu points to the GitHub-hosted copy on `main`.
+7. Complete the Foreground service permissions declaration (App content -> Foreground service permissions).
+   - Declares `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, used by the media controls notification that mirrors playback on the user's RelayTV server.
+   - Requires a short demo video showing the media controls notification while a RelayTV server is playing.
 
 ## App-Specific Verification
 
@@ -43,6 +47,11 @@ Use this checklist before cutting a public release or uploading a new Play Conso
    - `RelayTV Play` -> `/play_now`
 4. Confirm the WebView reconnects after the RelayTV server restarts or the network drops.
 5. Confirm the privacy menu opens the published policy URL.
+6. Confirm system media controls appear while the active server is playing:
+   - Play/pause, next/previous, seek, and the volume slider control the server.
+   - The notification disappears after the server goes idle.
+   - The Settings toggle ("Media controls") removes and restores the controls.
+7. Confirm the Settings screen opens from the toolbar menu and "Manage servers" opens the server picker.
 
 ## Signing And Distribution
 

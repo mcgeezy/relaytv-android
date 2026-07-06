@@ -127,6 +127,10 @@ class MainActivity : AppCompatActivity() {
                     loadActiveServer(forcePickerOnFailure = false, manualRefresh = true)
                     true
                 }
+                R.id.action_settings -> {
+                    startActivity(Intent(this, SettingsActivity::class.java))
+                    true
+                }
                 R.id.action_privacy -> {
                     openPrivacyPolicy()
                     true
@@ -182,6 +186,14 @@ class MainActivity : AppCompatActivity() {
             return
         }
         loadServerBase(base.trimEnd('/'), forcePickerOnFailure = true, manualRefresh = false)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra("open_servers", false)) {
+            showServerPicker()
+        }
     }
 
     private fun buildFileChooserIntent(fileChooserParams: WebChromeClient.FileChooserParams): Intent {
@@ -263,9 +275,17 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         isInForeground = true
         registerNetworkCallback()
+        ensureMediaControlService()
         if (!activeBaseUrl.isNullOrBlank()) {
             scheduleHeartbeat(2_000)
         }
+    }
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun ensureMediaControlService() {
+        if (!AppSettings.isMediaControlsEnabled(this)) return
+        if (HostStore.getActiveBaseUrl(this).isNullOrBlank()) return
+        runCatching { startService(Intent(this, MediaControlService::class.java)) }
     }
 
     override fun onPause() {
@@ -341,6 +361,8 @@ class MainActivity : AppCompatActivity() {
                     }
                     val recovered = consecutiveHealthFailures > 0
                     consecutiveHealthFailures = 0
+                    // Keep the media-controls service alive while we can see the server.
+                    ensureMediaControlService()
                     if (recovered && !manualRefresh) {
                         Toast.makeText(this@MainActivity, "Reconnected to RelayTV.", Toast.LENGTH_SHORT).show()
                     }

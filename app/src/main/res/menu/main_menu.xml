@@ -12,6 +12,10 @@
         android:icon="@android:drawable/ic_popup_sync"
         app:showAsAction="ifRoom" />
     <item
+        android:id="@+id/action_settings"
+        android:title="@string/settings"
+        app:showAsAction="never" />
+    <item
         android:id="@+id/action_privacy"
         android:title="@string/privacy_policy"
         app:showAsAction="never" />

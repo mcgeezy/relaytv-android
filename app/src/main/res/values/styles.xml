@@ -9,7 +9,7 @@
         <item name="android:colorBackground">@color/relaytv_surface</item>
 
     </style>
-    <style name="Theme.RelayTV.NoActionBar" parent="Theme.Material3.DayNight.NoActionBar" />
+    <style name="Theme.RelayTV.NoActionBar" parent="Theme.RelayTV" />
     <style name="Theme.RelayTV.Share" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
