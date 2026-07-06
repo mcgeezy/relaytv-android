@@ -42,8 +42,32 @@ jobs:
       - name: Build debug APK
         run: ./scripts/build-debug.sh assembleDebug lint
 
+      - name: Decode release keystore
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$RELEASE_KEYSTORE_BASE64" ]; then
+            echo "::error::RELEASE_KEYSTORE_BASE64 secret is not set; cannot sign the release."
+            exit 1
+          fi
+          echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+
       - name: Build release bundle
+        env:
+          ORG_GRADLE_PROJECT_MYAPP_RELEASE_STORE_FILE: ${{ runner.temp }}/release.keystore
+          ORG_GRADLE_PROJECT_MYAPP_RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          ORG_GRADLE_PROJECT_MYAPP_RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          ORG_GRADLE_PROJECT_MYAPP_RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: ./scripts/build-release.sh bundleRelease lintRelease
+
+      - name: Verify the release bundle is signed
+        run: |
+          if jarsigner -verify "app/build/outputs/bundle/release/app-release.aab" | grep -q "jar verified"; then
+            echo "Release bundle is signed."
+          else
+            echo "::error::Release bundle is NOT signed."
+            exit 1
+          fi
 
       - name: Prepare release assets
         run: |
