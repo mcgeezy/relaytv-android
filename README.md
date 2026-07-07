@@ -19,6 +19,7 @@ https://buymeacoffee.com/relaytv
 - Health verification before saving a server
 - LAN auto-discovery of `_relaytv._tcp` servers using Android NSD / mDNS
 - Embedded RelayTV `/ui` WebView access
+- System media controls (lock screen / quick settings) mirroring playback on the active server
 - Reconnect and heartbeat recovery
 - Dedicated Android share targets:
   - `RelayTV Queue` → `POST /smart`

@@ -34,4 +34,9 @@
     <string name="privacy_policy">Privacy policy</string>
     <string name="privacy_policy_url">https://github.com/mcgeezy/relaytv-android/blob/main/docs/PRIVACY_POLICY.md</string>
     <string name="privacy_open_failed">No browser available to open the privacy policy.</string>
+    <string name="settings">Settings</string>
+    <string name="media_controls_title">Media controls</string>
+    <string name="media_controls_summary">Show system media controls (lock screen and quick settings) for playback on the active server</string>
+    <string name="settings_manage_servers">Manage servers</string>
+    <string name="settings_manage_servers_summary">Add, edit, or switch RelayTV servers</string>
 </resources>

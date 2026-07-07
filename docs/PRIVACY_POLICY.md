@@ -1,6 +1,6 @@
 # RelayTV Android Privacy Policy
 
-Last updated: April 3, 2026
+Last updated: July 6, 2026
 
 ## Summary
 
@@ -19,6 +19,8 @@ RelayTV Android may process the following categories of data in order to operate
    - RelayTV service advertisements discovered on your local network via mDNS / NSD
 4. Device-local notification data
    - Notification text used to confirm a queue or play action
+5. Playback status data
+   - Now-playing metadata (title, artwork, playback position, volume) fetched from your selected RelayTV server to render system media controls
 
 ## How The App Uses Data
 
@@ -29,6 +31,7 @@ RelayTV Android uses the data above only to:
 3. Send shared links to RelayTV endpoints such as `/smart` or `/play_now`
 4. Discover compatible RelayTV servers on your local network
 5. Show local notifications about share results and reconnect state
+6. Show optional system media controls (lock screen / quick settings) that mirror and control playback on your selected server
 
 ## Data Storage
 
@@ -57,7 +60,9 @@ RelayTV Android may request or use these permissions:
 3. `CHANGE_WIFI_MULTICAST_STATE`
    - Required for local network RelayTV discovery on some devices
 4. `POST_NOTIFICATIONS`
-   - Required on newer Android versions to show queue/play result notifications
+   - Required on newer Android versions to show queue/play result notifications and the media controls notification
+5. `FOREGROUND_SERVICE` and `FOREGROUND_SERVICE_MEDIA_PLAYBACK`
+   - Required to keep the optional media controls notification active while your RelayTV server is playing
 
 ## Children
 
