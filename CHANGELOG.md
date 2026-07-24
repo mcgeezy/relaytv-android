@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2](https://github.com/mcgeezy/relaytv-android/compare/v1.3.1...v1.3.2) (2026-07-24)
+
+
+### Bug Fixes
+
+* publish release-signed APKs ([#7](https://github.com/mcgeezy/relaytv-android/issues/7)) ([afe97ea](https://github.com/mcgeezy/relaytv-android/commit/afe97ea43ec296add9736f36ca39a9470513e970))
+
 ## [1.3.1](https://github.com/mcgeezy/relaytv-android/compare/v1.3.0...v1.3.1) (2026-07-24)
 
 
