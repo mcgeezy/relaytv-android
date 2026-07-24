@@ -18,7 +18,7 @@ fi
 if [[ "$#" -gt 0 ]]; then
     TASKS=("$@")
 else
-    TASKS=("clean" "bundleRelease" "lintRelease")
+    TASKS=("clean" "assembleRelease" "bundleRelease" "lintRelease")
 fi
 
 echo "Running Gradle tasks: ${TASKS[*]}"
