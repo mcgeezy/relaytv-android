@@ -1,6 +1,6 @@
 # RelayTV Android Privacy Policy
 
-Last updated: July 6, 2026
+Last updated: July 24, 2026
 
 ## Summary
 
@@ -13,6 +13,7 @@ RelayTV Android may process the following categories of data in order to operate
 1. RelayTV server information
    - Server names and base URLs you add in the app
    - The currently selected active server
+   - Optional API tokens you provide for protected RelayTV servers
 2. Shared content
    - Links you share into the app using Android share targets such as `RelayTV Queue` and `RelayTV Play`
 3. Local network discovery data
@@ -32,10 +33,11 @@ RelayTV Android uses the data above only to:
 4. Discover compatible RelayTV servers on your local network
 5. Show local notifications about share results and reconnect state
 6. Show optional system media controls (lock screen / quick settings) that mirror and control playback on your selected server
+7. Authenticate control, share, upload, and media-control requests when your RelayTV server requires an API token
 
 ## Data Storage
 
-The app stores configured server names and base URLs locally on your device using Android shared preferences.
+The app stores configured server names, base URLs, and optional API tokens locally in app-private storage on your device. These preferences are excluded from Android backup and device transfer. A configured token is also copied into the selected server origin's WebView local storage so the embedded RelayTV UI can authenticate write requests.
 
 The app does not operate its own cloud backend and does not sync your app data to a RelayTV-operated online service.
 

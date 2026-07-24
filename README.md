@@ -16,6 +16,7 @@ https://buymeacoffee.com/relaytv
 ## Features
 
 - Multi-server support
+- Optional per-server bearer tokens for protected RelayTV write endpoints
 - Health verification before saving a server
 - LAN auto-discovery of `_relaytv._tcp` servers using Android NSD / mDNS
 - Embedded RelayTV `/ui` WebView access
@@ -148,8 +149,11 @@ HTTP support is intentionally retained because RelayTV is often used as a truste
 
 - `GET /health`
 - `GET /ui`
+- `POST /auth/check`
 - `POST /smart`
 - `POST /play_now`
+- `POST /ingest/media/play`
+- `POST /ingest/media/enqueue`
 
 ---
 
