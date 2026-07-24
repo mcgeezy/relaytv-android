@@ -17,9 +17,10 @@ Use this checklist before cutting a public release or uploading a new Play Conso
 
 ## Versioning
 
-1. Increment `versionCode` for every public upload.
-2. Set `versionName` to the user-facing release number.
-3. Verify the user agent string and release notes match the version being shipped.
+1. Confirm the rolling `chore(main): release …` pull request contains every intended change.
+2. Verify its `version.txt` and `CHANGELOG.md` updates.
+3. Do not edit `versionCode` directly; Gradle derives it from `version.txt`.
+4. Verify the user agent string and release notes match the version being shipped.
 
 ## Play Console Requirements
 
@@ -58,8 +59,10 @@ Use this checklist before cutting a public release or uploading a new Play Conso
 ## Signing And Distribution
 
 1. Configure your release signing key or Play App Signing flow.
-2. Archive the signed `.aab`, release notes, and the exact commit SHA used for the build.
-3. Tag the release in git after the Play upload is verified.
+2. Merge the Release Please chore only after its Android CI check succeeds.
+3. Confirm the resulting GitHub Release remains a draft until the signed build completes.
+4. Confirm the workflow uploads both the `.aab` and debug `.apk`, then publishes the release.
+5. Archive the signed `.aab`, release notes, and the exact commit SHA used for the build.
 
 ## Official References
 
