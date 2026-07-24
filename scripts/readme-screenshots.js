@@ -100,8 +100,13 @@ async function captureScreens(serial) {
   const share = capture(serial);
   adb(serial, ['shell', 'input', 'keyevent', '4']);
   adb(serial, ['shell', 'am', 'start', '-n', 'pro.relaytv/.MainActivity']);
+  await sleep(900);
+  adb(serial, ['shell', 'cmd', 'statusbar', 'expand-notifications']);
+  await sleep(1500);
+  const media = capture(serial);
+  adb(serial, ['shell', 'cmd', 'statusbar', 'collapse']);
 
-  return { main, servers, share };
+  return { main, servers, share, media };
 }
 
 function phoneHtml(image, eyebrow, label, detail) {
@@ -193,6 +198,7 @@ async function main() {
     main: option('main'),
     servers: option('servers'),
     share: option('share'),
+    media: option('media'),
   };
   const images = Object.values(supplied).every(Boolean)
     ? Object.fromEntries(Object.entries(supplied).map(([key, value]) => [key, fs.readFileSync(path.resolve(value))]))
@@ -209,6 +215,7 @@ async function main() {
     await render(browser, phoneHtml(images.main, 'Control', 'Remote + queue', 'Everything you need from the couch.'), path.join(outputDir, 'remote-phone.png'), { width: 760, height: 1160 });
     await render(browser, phoneHtml(images.servers, 'Discover', 'Every server, one tap away', 'mDNS discovery, health, and per-server auth.'), path.join(outputDir, 'servers-phone.png'), { width: 760, height: 1160 });
     await render(browser, phoneHtml(images.share, 'Share', 'Play now or queue next', 'Two Android targets, no copy and paste.'), path.join(outputDir, 'share-phone.png'), { width: 760, height: 1160 });
+    await render(browser, phoneHtml(images.media, 'System controls', 'Playback follows you', 'Lock screen and notification-shade controls.'), path.join(outputDir, 'media-controls-phone.png'), { width: 760, height: 1160 });
   } finally {
     await browser.close();
   }
@@ -216,7 +223,7 @@ async function main() {
   process.stdout.write(`${JSON.stringify({
     ok: true,
     outputDir,
-    files: ['hero.png', 'remote-phone.png', 'servers-phone.png', 'share-phone.png'],
+    files: ['hero.png', 'remote-phone.png', 'servers-phone.png', 'share-phone.png', 'media-controls-phone.png'],
   }, null, 2)}\n`);
 }
 

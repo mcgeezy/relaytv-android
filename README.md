@@ -83,16 +83,32 @@ owns playback, queue advancement, history, and the display runtime.
   </tr>
 </table>
 
-<p align="center">
-  <img src="docs/images/readme/servers-phone.png" alt="RelayTV Android server picker with health and API-token status" width="48%">
-</p>
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/images/readme/servers-phone.png" alt="RelayTV Android server picker with health and API-token status" width="100%">
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/images/readme/media-controls-phone.png" alt="RelayTV Android media controls in the notification shade and lock screen" width="100%">
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <h3>Every RelayTV screen, one tap away</h3>
+      Keep several servers in one app, verify availability, switch active
+      screens, and discover new RelayTV devices without typing an IP address.
+    </td>
+    <td valign="top">
+      <h3>Playback controls that follow you</h3>
+      RelayTV publishes the active server as an Android media session, putting
+      artwork, play/pause, previous, next, and seek controls on the lock screen
+      and in the notification shade.
+    </td>
+  </tr>
+</table>
 
-### Every RelayTV screen, one tap away
-
-Keep several RelayTV servers in one app, select the active screen, verify
-availability before connecting, and discover new servers without typing an IP
-address. Protected servers use the same optional bearer token for WebView
-controls, shares, uploads, and native media controls.
+Protected servers use the same optional bearer token for WebView controls,
+shares, uploads, and native media controls.
 
 > The images above were captured from a physical Android device and composed
 > with [`scripts/readme-screenshots.js`](scripts/readme-screenshots.js).
@@ -183,8 +199,9 @@ npx playwright install chromium
 npm run readme:screenshots -- --serial="$(adb devices | awk '$2 == "device" { print $1; exit }')"
 ```
 
-The script opens RelayTV, captures the remote, server picker, and Android share
-chooser, then rebuilds the images in `docs/images/readme`.
+The script opens RelayTV and captures the remote, server picker, Android share
+chooser, and system media controls, then rebuilds the images in
+`docs/images/readme`.
 
 ## Releases
 
