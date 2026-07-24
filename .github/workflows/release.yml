@@ -90,15 +90,15 @@ jobs:
           fi
           echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
 
-      - name: Build release bundle
+      - name: Build release artifacts
         env:
           ORG_GRADLE_PROJECT_MYAPP_RELEASE_STORE_FILE: ${{ runner.temp }}/release.keystore
           ORG_GRADLE_PROJECT_MYAPP_RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           ORG_GRADLE_PROJECT_MYAPP_RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           ORG_GRADLE_PROJECT_MYAPP_RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
-        run: ./scripts/build-release.sh bundleRelease lintRelease
+        run: ./scripts/build-release.sh assembleRelease bundleRelease lintRelease
 
-      - name: Verify release bundle signature
+      - name: Verify release signatures
         run: |
           if jarsigner -verify "app/build/outputs/bundle/release/app-release.aab" | grep -q "jar verified"; then
             echo "Release bundle is signed."
@@ -107,12 +107,17 @@ jobs:
             exit 1
           fi
 
+          "${ANDROID_SDK_ROOT}/build-tools/35.0.0/apksigner" verify \
+            --verbose \
+            --print-certs \
+            "app/build/outputs/apk/release/app-release.apk"
+
       - name: Prepare release assets
         env:
           TAG_NAME: ${{ inputs.tag_name }}
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk "dist/relaytv-${TAG_NAME}-debug.apk"
+          cp app/build/outputs/apk/release/app-release.apk "dist/relaytv-${TAG_NAME}.apk"
           cp app/build/outputs/bundle/release/app-release.aab "dist/relaytv-${TAG_NAME}.aab"
 
       - name: Upload workflow artifacts

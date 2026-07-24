@@ -121,6 +121,11 @@ shares, uploads, and native media controls.
 4. Open RelayTV and select **Scan LAN**, or add the server URL manually.
 5. Enter the server API token only when `RELAYTV_API_TOKEN` is enabled.
 
+> **Upgrading from v1.3.1 or earlier:** GitHub previously distributed a
+> debug-signed APK. Record your configured server details, uninstall that APK,
+> and install the current release APK once to move to the stable signing key.
+> Future GitHub release APKs can then upgrade in place.
+
 The app verifies `GET /health` before saving a server. A protected server also
 validates the supplied credential through `POST /auth/check`.
 
@@ -180,15 +185,18 @@ adb devices
 ./scripts/test-connected.sh
 ```
 
-Build the release bundle and run release lint:
+Build the release APK and bundle, then run release lint:
 
 ```bash
 ./scripts/build-release.sh
 ```
 
-The Android App Bundle is written to
-`app/build/outputs/bundle/release/app-release.aab`. See the
-[release checklist](docs/RELEASE_CHECKLIST.md) before publishing.
+Without release signing properties, Gradle writes an unsigned APK to
+`app/build/outputs/apk/release/app-release-unsigned.apk` and the Android App
+Bundle to `app/build/outputs/bundle/release/app-release.aab`. GitHub Releases
+use the configured signing secrets to produce and verify an installable
+`app-release.apk`. See the [release checklist](docs/RELEASE_CHECKLIST.md)
+before publishing.
 
 ### Regenerate README images
 
@@ -214,7 +222,7 @@ debug CI. When the release chore is ready:
 2. Wait for Android CI to pass.
 3. Merge the release chore.
 4. Release Please creates a draft tag and GitHub Release.
-5. The signed release workflow builds, verifies, and uploads the AAB and APK.
+5. The signed release workflow builds, verifies, and uploads the release APK and AAB.
 6. The workflow publishes the draft only after every release step succeeds.
 
 Use squash-merge titles such as `feat: add playback control` or

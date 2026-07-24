@@ -61,8 +61,9 @@ Use this checklist before cutting a public release or uploading a new Play Conso
 1. Configure your release signing key or Play App Signing flow.
 2. Merge the Release Please chore only after its Android CI check succeeds.
 3. Confirm the resulting GitHub Release remains a draft until the signed build completes.
-4. Confirm the workflow uploads both the `.aab` and debug `.apk`, then publishes the release.
-5. Archive the signed `.aab`, release notes, and the exact commit SHA used for the build.
+4. Confirm the workflow verifies and uploads both the release-signed `.apk` and `.aab` before publishing.
+5. Confirm the GitHub Release does not expose a debug-signed APK.
+6. Archive the signed artifacts, release notes, and the exact commit SHA used for the build.
 
 ## Official References
 
