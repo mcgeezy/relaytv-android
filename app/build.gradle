@@ -3,6 +3,25 @@ plugins {
     id "org.jetbrains.kotlin.android"
 }
 
+def relayTvVersionName = rootProject.file("version.txt").getText("UTF-8").trim()
+def relayTvVersionMatcher = relayTvVersionName =~ /^(\d+)\.(\d+)\.(\d+)$/
+if (!relayTvVersionMatcher.matches()) {
+    throw new GradleException("version.txt must contain a stable semantic version (major.minor.patch)")
+}
+
+def relayTvVersionMajor = relayTvVersionMatcher.group(1).toLong()
+def relayTvVersionMinor = relayTvVersionMatcher.group(2).toLong()
+def relayTvVersionPatch = relayTvVersionMatcher.group(3).toLong()
+if (relayTvVersionMinor > 999 || relayTvVersionPatch > 999) {
+    throw new GradleException("version.txt minor and patch components must be less than 1000")
+}
+
+def relayTvVersionCodeLong = relayTvVersionMajor * 1_000_000L + relayTvVersionMinor * 1_000L + relayTvVersionPatch
+if (relayTvVersionCodeLong < 1 || relayTvVersionCodeLong > 2_100_000_000L) {
+    throw new GradleException("Derived Android versionCode is outside the supported range")
+}
+def relayTvVersionCode = relayTvVersionCodeLong.toInteger()
+
 android {
     namespace = "pro.relaytv"
     compileSdk = 35
@@ -11,8 +30,8 @@ android {
         applicationId = "pro.relaytv"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.3.0"
+        versionCode = relayTvVersionCode
+        versionName = relayTvVersionName
     }
 
     // Release signing is configured via gradle.properties (see todo.md /

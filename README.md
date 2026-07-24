@@ -154,7 +154,8 @@ description.
 - A reachable RelayTV server on a local network, VPN, or trusted HTTPS URL
 - Optional `_relaytv._tcp` mDNS advertisement for automatic discovery
 
-Current application version: **1.3.0** (`versionCode 6`).
+The current semantic version is tracked in [`version.txt`](version.txt). Gradle
+derives a monotonic Android `versionCode` from its `major.minor.patch` value.
 
 ## Build and test
 
@@ -205,15 +206,32 @@ chooser, and system media controls, then rebuilds the images in
 
 ## Releases
 
-Pushing a semantic version tag runs the signed GitHub release workflow:
+Release Please maintains one rolling `chore(main): release …` pull request from
+Conventional Commit titles merged into `main`. Regular pull requests run only
+debug CI. When the release chore is ready:
 
-```bash
-git tag v1.3.0
-git push origin v1.3.0
-```
+1. Review its version bump and `CHANGELOG.md` update.
+2. Wait for Android CI to pass.
+3. Merge the release chore.
+4. Release Please creates a draft tag and GitHub Release.
+5. The signed release workflow builds, verifies, and uploads the AAB and APK.
+6. The workflow publishes the draft only after every release step succeeds.
 
-The workflow publishes a signed Android App Bundle and a debug APK to the
-matching GitHub Release. Signing credentials remain in GitHub Actions secrets.
+Use squash-merge titles such as `feat: add playback control` or
+`fix: authenticate media uploads`. A `feat:` selects a minor release, `fix:` a
+patch release, and a Conventional Commit breaking change selects a major
+release. Documentation and CI commits are included in the changelog without
+independently forcing a release.
+
+For fully automatic CI on Release Please's generated pull request, configure a
+fine-grained `RELEASE_PLEASE_TOKEN` Actions secret with repository contents,
+issues, and pull-request write access. The workflow falls back to
+`GITHUB_TOKEN`, but GitHub may require approval for workflow runs created by
+that token.
+
+Signing credentials remain in GitHub Actions secrets. The **Build Android
+release** workflow also supports manual dispatch to retry an existing draft
+release by tag and commit SHA.
 
 ## Companion projects
 
