@@ -34,6 +34,7 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
     override fun doWork(): Result {
         val base = inputData.getString(KEY_BASE)?.trim()?.trimEnd('/') ?: return Result.failure()
         val endpointPath = inputData.getString(KEY_ENDPOINT_PATH)?.trim()?.ifBlank { "/smart" } ?: "/smart"
+        val apiToken = HostStore.getApiTokenForBase(applicationContext, base)
         val uploadPath = inputData.getString(KEY_UPLOAD_FILE_PATH)?.trim().orEmpty()
         val localUpload = uploadPath.takeIf { it.isNotBlank() }?.let { File(it) }
         val displayText = inputData.getString(KEY_UPLOAD_TITLE)?.takeIf { !it.isNullOrBlank() }
@@ -43,14 +44,14 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
 
         return try {
             if (localUpload != null && endpointPath == "/play_now") {
-                val playResult = uploadAndPlayMedia(base, localUpload)
+                val playResult = uploadAndPlayMedia(base, localUpload, apiToken)
                 postNotification(playResult.title, displayText, tapToOpen = true)
                 localUpload.delete()
                 return Result.success()
             }
 
             if (localUpload != null) {
-                val enqueueResult = uploadAndEnqueueMedia(base, localUpload)
+                val enqueueResult = uploadAndEnqueueMedia(base, localUpload, apiToken)
                 postNotification(enqueueResult.title, displayText, tapToOpen = true)
                 localUpload.delete()
                 return Result.success()
@@ -59,16 +60,17 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
             val url = inputData.getString(KEY_URL) ?: return Result.failure()
 
             val payload = JSONObject().put("url", url).toString()
-            val req = Net.postJson(base + endpointPath, payload)
+            val req = Net.postJson(base + endpointPath, payload, apiToken)
 
             Net.client.newCall(req).execute().use { resp ->
                 val body = resp.body?.string().orEmpty()
                 val ok = resp.isSuccessful
                 val msg = runCatching {
                     val j = JSONObject(body)
-                    when (j.optString("status")) {
-                        "playing" -> "Playing now"
-                        "queued" -> "Enqueued"
+                    when {
+                        resp.code == 401 -> "API token required"
+                        j.optString("status") == "playing" -> "Playing now"
+                        j.optString("status") == "queued" -> "Enqueued"
                         else -> if (ok) "Sent" else "Error"
                     }
                 }.getOrDefault(if (ok) "Sent" else "Error")
@@ -113,7 +115,7 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
         val title: String,
     )
 
-    private fun uploadAndEnqueueMedia(base: String, file: File): UploadEnqueueResult {
+    private fun uploadAndEnqueueMedia(base: String, file: File, apiToken: String): UploadEnqueueResult {
         if (!file.exists() || !file.isFile) {
             throw ShareFailure("Shared media file is no longer available", retryable = false)
         }
@@ -125,6 +127,7 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
             file = file,
             mimeType = mimeType.ifBlank { null },
             title = title.ifBlank { null },
+            apiToken = apiToken,
         )
         Net.uploadClient.newCall(req).execute().use { resp ->
             val body = resp.body?.string().orEmpty()
@@ -144,7 +147,7 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
         }
     }
 
-    private fun uploadAndPlayMedia(base: String, file: File): UploadPlayResult {
+    private fun uploadAndPlayMedia(base: String, file: File, apiToken: String): UploadPlayResult {
         if (!file.exists() || !file.isFile) {
             throw ShareFailure("Shared media file is no longer available", retryable = false)
         }
@@ -156,6 +159,7 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
             file = file,
             mimeType = mimeType.ifBlank { null },
             title = title.ifBlank { null },
+            apiToken = apiToken,
         )
         Net.uploadClient.newCall(req).execute().use { resp ->
             val body = resp.body?.string().orEmpty()

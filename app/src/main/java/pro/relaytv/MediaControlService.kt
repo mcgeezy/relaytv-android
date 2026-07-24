@@ -206,8 +206,9 @@ class MediaControlService : MediaSessionService() {
     }
 
     private fun post(path: String, json: String = "{}") {
-        val base = activeBase() ?: return
-        Net.client.newCall(Net.postJson(base + path, json)).enqueue(object : Callback {
+        val host = HostStore.getActiveHost(this) ?: return
+        val base = HostStore.normalizeBaseUrl(host.baseUrl) ?: return
+        Net.client.newCall(Net.postJson(base + path, json, host.apiToken)).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 handler.post { schedulePoll(POLL_AFTER_COMMAND_MS) }
             }

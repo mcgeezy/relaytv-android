@@ -52,6 +52,8 @@ Use this checklist before cutting a public release or uploading a new Play Conso
    - The notification disappears after the server goes idle.
    - The Settings toggle ("Media controls") removes and restores the controls.
 7. Confirm the Settings screen opens from the toolbar menu and "Manage servers" opens the server picker.
+8. Confirm a server without `RELAYTV_API_TOKEN` still supports WebView controls, shares, uploads, and media controls.
+9. Confirm a protected server accepts a valid per-server API token and rejects a missing or incorrect token.
 
 ## Signing And Distribution
 

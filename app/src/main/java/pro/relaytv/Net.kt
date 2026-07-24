@@ -26,12 +26,20 @@ object Net {
         .writeTimeout(20, TimeUnit.MINUTES)
         .build()
 
-    fun get(url: String): Request = Request.Builder().url(url).get().build()
+    fun get(url: String, apiToken: String? = null): Request = Request.Builder()
+        .url(url)
+        .applyBearerToken(apiToken)
+        .get()
+        .build()
 
-    fun postJson(url: String, json: String): Request {
+    fun postJson(url: String, json: String, apiToken: String? = null): Request {
         val mt = "application/json; charset=utf-8".toMediaType()
         val body = json.toRequestBody(mt)
-        return Request.Builder().url(url).post(body).build()
+        return Request.Builder()
+            .url(url)
+            .applyBearerToken(apiToken)
+            .post(body)
+            .build()
     }
 
     fun postMultipartFile(
@@ -41,6 +49,7 @@ object Net {
         fileName: String = file.name,
         mimeType: String? = null,
         title: String? = null,
+        apiToken: String? = null,
     ): Request {
         val contentType = mimeType?.toMediaTypeOrNull()
             ?: "application/octet-stream".toMediaType()
@@ -58,7 +67,15 @@ object Net {
 
         return Request.Builder()
             .url(url)
+            .applyBearerToken(apiToken)
             .post(bodyBuilder.build())
             .build()
+    }
+
+    private fun Request.Builder.applyBearerToken(apiToken: String?): Request.Builder = apply {
+        val token = apiToken?.trim().orEmpty()
+        if (token.isNotEmpty()) {
+            header("Authorization", "Bearer $token")
+        }
     }
 }

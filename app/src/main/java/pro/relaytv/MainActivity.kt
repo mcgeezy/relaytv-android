@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.view.LayoutInflater
 import android.view.View
 import android.webkit.WebChromeClient
@@ -38,6 +39,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.Response
+import org.json.JSONObject
 import java.io.IOException
 import kotlin.math.min
 
@@ -87,6 +89,13 @@ class MainActivity : AppCompatActivity() {
         private const val HEARTBEAT_OK_MS = 15_000L
         private const val HEARTBEAT_BASE_RETRY_MS = 4_000L
         private const val HEARTBEAT_MAX_RETRY_MS = 60_000L
+    }
+
+    private enum class ApiTokenCheckResult {
+        ACCEPTED,
+        REJECTED,
+        UNSUPPORTED,
+        FAILED,
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -165,6 +174,7 @@ class MainActivity : AppCompatActivity() {
         web.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String) {
                 mainFrameFailed = false
+                syncWebViewApiToken(view, url)
             }
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
@@ -308,12 +318,56 @@ class MainActivity : AppCompatActivity() {
             return
         }
         activeBaseUrl = normalized
+        syncWebViewApiToken(web, web.url.orEmpty())
         probeServerHealth(
             base = normalized,
             forcePickerOnFailure = forcePickerOnFailure,
             loadUiOnSuccess = true,
             manualRefresh = manualRefresh
         )
+    }
+
+    private fun syncWebViewApiToken(view: WebView, pageUrl: String) {
+        val base = activeBaseUrl ?: return
+        if (pageUrl != base && !pageUrl.startsWith("$base/")) return
+        val apiToken = HostStore.getApiTokenForBase(this, base)
+        if (apiToken.isBlank()) return
+
+        val quotedToken = JSONObject.quote(apiToken)
+        view.evaluateJavascript(
+            "window.localStorage.setItem('relaytv_api_token', $quotedToken);",
+            null,
+        )
+    }
+
+    private fun checkApiToken(
+        base: String,
+        apiToken: String,
+        callback: (ApiTokenCheckResult) -> Unit,
+    ) {
+        val request = try {
+            Net.postJson("$base/auth/check", "{}", apiToken)
+        } catch (_: Exception) {
+            callback(ApiTokenCheckResult.FAILED)
+            return
+        }
+        Net.client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                callback(ApiTokenCheckResult.FAILED)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                val result = response.use {
+                    when {
+                        it.isSuccessful -> ApiTokenCheckResult.ACCEPTED
+                        it.code == 401 -> ApiTokenCheckResult.REJECTED
+                        it.code == 404 || it.code == 405 -> ApiTokenCheckResult.UNSUPPORTED
+                        else -> ApiTokenCheckResult.FAILED
+                    }
+                }
+                callback(result)
+            }
+        })
     }
 
     private fun loadActiveServer(forcePickerOnFailure: Boolean, manualRefresh: Boolean) {
@@ -492,7 +546,12 @@ class MainActivity : AppCompatActivity() {
                 ?: hosts.firstOrNull { it.id == HostStore.getActiveHostId(this) }
                 ?: hosts.firstOrNull()
             txtActiveServer.text = if (active != null) {
-                "${active.name}\n${active.baseUrl}"
+                val tokenStatus = if (active.apiToken.isNotBlank()) {
+                    "\n${getString(R.string.api_token_configured)}"
+                } else {
+                    ""
+                }
+                "${active.name}\n${active.baseUrl}$tokenStatus"
             } else {
                 getString(R.string.no_server_selected)
             }
@@ -543,7 +602,12 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     ""
                 }
-                "${host.name}  •  ${prefix}${statusLabelFor(host)}\n${host.baseUrl}"
+                val tokenStatus = if (host.apiToken.isNotBlank()) {
+                    " • ${getString(R.string.status_token)}"
+                } else {
+                    ""
+                }
+                "${host.name}  •  ${prefix}${statusLabelFor(host)}$tokenStatus\n${host.baseUrl}"
             }
             list.adapter = ArrayAdapter(this, R.layout.item_server_picker_choice, android.R.id.text1, labels)
             list.choiceMode = ListView.CHOICE_MODE_SINGLE
@@ -642,7 +706,14 @@ class MainActivity : AppCompatActivity() {
             val urlInput = EditText(this).apply {
                 hint = getString(R.string.server_url)
                 setText(existing?.baseUrl ?: "")
-                inputType = android.text.InputType.TYPE_TEXT_VARIATION_URI
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+                setSingleLine(true)
+            }
+            val tokenInput = EditText(this).apply {
+                hint = getString(R.string.server_api_token)
+                setText(existing?.apiToken ?: "")
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                setSingleLine(true)
             }
 
             val container = LinearLayout(this).apply {
@@ -651,6 +722,7 @@ class MainActivity : AppCompatActivity() {
                 setPadding(pad, (8 * resources.displayMetrics.density).toInt(), pad, 0)
                 addView(nameInput)
                 addView(urlInput)
+                addView(tokenInput)
             }
 
             val dlg = MaterialAlertDialogBuilder(this)
@@ -667,9 +739,14 @@ class MainActivity : AppCompatActivity() {
                     val name = nameInput.text.toString().trim().ifBlank { "Server" }
                     val raw = urlInput.text.toString()
                     val base = HostStore.normalizeBaseUrl(raw)
+                    val apiToken = tokenInput.text.toString().trim()
 
                     if (base.isNullOrBlank()) {
                         Toast.makeText(this, "Enter a valid base URL (example: http://10.0.55.2:8787).", Toast.LENGTH_SHORT).show()
+                        return@setOnClickListener
+                    }
+                    if (apiToken.any { it == '\r' || it == '\n' }) {
+                        Toast.makeText(this, getString(R.string.server_api_token_invalid), Toast.LENGTH_SHORT).show()
                         return@setOnClickListener
                     }
 
@@ -686,32 +763,68 @@ class MainActivity : AppCompatActivity() {
                         }
 
                         override fun onResponse(call: Call, response: Response) {
-                            val ok = response.isSuccessful && try {
-                                val body = response.body?.string() ?: ""
-                                val o = org.json.JSONObject(body)
-                                o.optBoolean("ok", false)
-                            } catch (_: Exception) { false }
+                            val ok = response.use { resp ->
+                                resp.isSuccessful && try {
+                                    val body = resp.body?.string() ?: ""
+                                    JSONObject(body).optBoolean("ok", false)
+                                } catch (_: Exception) {
+                                    false
+                                }
+                            }
 
-                            runOnUiThread {
-                                if (!ok) {
+                            if (!ok) {
+                                runOnUiThread {
                                     btn.isEnabled = true
                                     Toast.makeText(this@MainActivity, "Not a RelayTV server (check /health).", Toast.LENGTH_LONG).show()
-                                    return@runOnUiThread
                                 }
+                                return
+                            }
 
-                                val host = if (existing == null) {
-                                    HostStore.create(this@MainActivity, name, base)
-                                } else {
-                                    val updated = existing.copy(name = name, baseUrl = base)
-                                    HostStore.upsert(this@MainActivity, updated)
-                                    updated
+                            checkApiToken(base, apiToken) { result ->
+                                runOnUiThread {
+                                    if (!dlg.isShowing) return@runOnUiThread
+                                    when (result) {
+                                        ApiTokenCheckResult.REJECTED -> {
+                                            btn.isEnabled = true
+                                            Toast.makeText(
+                                                this@MainActivity,
+                                                getString(R.string.server_api_token_rejected),
+                                                Toast.LENGTH_LONG,
+                                            ).show()
+                                            return@runOnUiThread
+                                        }
+                                        ApiTokenCheckResult.FAILED -> {
+                                            btn.isEnabled = true
+                                            Toast.makeText(
+                                                this@MainActivity,
+                                                getString(R.string.server_api_token_check_failed),
+                                                Toast.LENGTH_LONG,
+                                            ).show()
+                                            return@runOnUiThread
+                                        }
+                                        ApiTokenCheckResult.ACCEPTED,
+                                        ApiTokenCheckResult.UNSUPPORTED -> Unit
+                                    }
+
+                                    val host = if (existing == null) {
+                                        HostStore.create(this@MainActivity, name, base, apiToken)
+                                    } else {
+                                        val updated = existing.copy(
+                                            name = name,
+                                            baseUrl = base,
+                                            apiToken = apiToken,
+                                        )
+                                        HostStore.upsert(this@MainActivity, updated)
+                                        updated
+                                    }
+
+                                    HostStore.setActiveHostId(this@MainActivity, host.id)
+                                    hostStatuses.remove(host.id)
+                                    statusChecksInFlight.remove(host.id)
+                                    refresh(host.id)
+                                    syncWebViewApiToken(web, web.url.orEmpty())
+                                    dlg.dismiss()
                                 }
-
-                                HostStore.setActiveHostId(this@MainActivity, host.id)
-                                hostStatuses.remove(host.id)
-                                statusChecksInFlight.remove(host.id)
-                                refresh(host.id)
-                                dlg.dismiss()
                             }
                         }
                     })

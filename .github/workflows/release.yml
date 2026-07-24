@@ -39,8 +39,8 @@ jobs:
       - name: Ensure scripts are executable
         run: chmod +x gradlew scripts/*.sh
 
-      - name: Build debug APK
-        run: ./scripts/build-debug.sh assembleDebug lint
+      - name: Build, lint, and test debug app
+        run: ./scripts/build-debug.sh assembleDebug lint testDebugUnitTest
 
       - name: Decode release keystore
         env:

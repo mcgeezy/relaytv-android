@@ -10,6 +10,7 @@ data class RelayHost(
     val id: String,
     val name: String,
     val baseUrl: String,
+    val apiToken: String = "",
 )
 
 object HostStore {
@@ -17,7 +18,6 @@ object HostStore {
     private const val KEY_HOSTS = "hosts_json"
     private const val KEY_ACTIVE = "active_host_id"
 
-    
     fun normalizeBaseUrl(input: String): String? {
         var s = input.trim()
         if (s.isBlank()) return null
@@ -30,7 +30,7 @@ object HostStore {
         return url.toString().trimEnd('/')
     }
 
-private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+    private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
     @Suppress("UNUSED_PARAMETER")
     fun ensureMigrated(ctx: Context) {
@@ -50,6 +50,7 @@ private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREF, Context.MODE_PR
                             id = o.optString("id"),
                             name = o.optString("name", "Server"),
                             baseUrl = normalizeBaseUrl(o.optString("baseUrl")) ?: "",
+                            apiToken = o.optString("apiToken").trim(),
                         )
                     )
                 }
@@ -67,6 +68,7 @@ private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREF, Context.MODE_PR
                     .put("id", it.id)
                     .put("name", it.name)
                     .put("baseUrl", normalizeBaseUrl(it.baseUrl) ?: "")
+                    .put("apiToken", it.apiToken.trim())
             )
         }
         prefs(ctx).edit().putString(KEY_HOSTS, arr.toString()).apply()
@@ -95,6 +97,19 @@ private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREF, Context.MODE_PR
         return normalizeBaseUrl(hit.baseUrl) ?: ""
     }
 
+    fun getApiTokenForBase(ctx: Context, baseUrl: String): String {
+        val normalized = normalizeBaseUrl(baseUrl) ?: return ""
+        val active = getActiveHost(ctx)
+        if (active != null && normalizeBaseUrl(active.baseUrl) == normalized) {
+            return active.apiToken.trim()
+        }
+        return loadHosts(ctx)
+            .firstOrNull { normalizeBaseUrl(it.baseUrl) == normalized }
+            ?.apiToken
+            ?.trim()
+            .orEmpty()
+    }
+
     fun upsert(ctx: Context, host: RelayHost) {
         val hosts = loadHosts(ctx).toMutableList()
         val idx = hosts.indexOfFirst { it.id == host.id }
@@ -112,9 +127,14 @@ private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREF, Context.MODE_PR
         }
     }
 
-    fun create(ctx: Context, name: String, baseUrl: String): RelayHost {
+    fun create(ctx: Context, name: String, baseUrl: String, apiToken: String = ""): RelayHost {
         val norm = normalizeBaseUrl(baseUrl) ?: ""
-        val host = RelayHost(UUID.randomUUID().toString(), name.ifBlank { "Server" }, norm)
+        val host = RelayHost(
+            id = UUID.randomUUID().toString(),
+            name = name.ifBlank { "Server" },
+            baseUrl = norm,
+            apiToken = apiToken.trim(),
+        )
         upsert(ctx, host)
         if (getActiveHostId(ctx).isNullOrBlank()) setActiveHostId(ctx, host.id)
         return host

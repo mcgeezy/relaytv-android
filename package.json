@@ -1,0 +1,10 @@
+{
+  "name": "relaytv-android-readme-tools",
+  "private": true,
+  "scripts": {
+    "readme:screenshots": "node scripts/readme-screenshots.js"
+  },
+  "devDependencies": {
+    "playwright": "1.61.1"
+  }
+}

@@ -3,6 +3,7 @@
 .kotlin/
 **/build/
 captures/
+node_modules/
 .externalNativeBuild/
 .cxx/
 *.apk
