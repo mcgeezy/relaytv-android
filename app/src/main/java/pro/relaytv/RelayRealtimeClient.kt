@@ -197,6 +197,7 @@ class RelayRealtimeClient(
                             return
                         }
                         receivedHello = true
+                        lastSequence = 0
                         failureCount = 0
                         setTransportLocked(owner, Transport.WEBSOCKET)
                         listener.onAuthoritativeRefreshRequired(owner, currentIdentityLocked())
