@@ -110,6 +110,11 @@ owns playback, queue advancement, history, and the display runtime.
 Protected servers use the same optional bearer token for WebView controls,
 shares, uploads, and native media controls.
 
+Native media controls automatically choose the best local state transport:
+the versioned RelayTV WebSocket first, the compatible SSE stream second, and
+adaptive `/status` polling during outages or with older network paths. The
+embedded WebView independently uses the same server-advertised preference.
+
 > The images above were captured from a physical Android device and composed
 > with [`scripts/readme-screenshots.js`](scripts/readme-screenshots.js).
 

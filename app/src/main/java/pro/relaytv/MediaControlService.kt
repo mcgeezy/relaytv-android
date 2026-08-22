@@ -2,6 +2,8 @@ package pro.relaytv
 
 import android.app.PendingIntent
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -11,6 +13,7 @@ import androidx.media3.session.MediaSessionService
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.Response
+import org.json.JSONObject
 import java.io.IOException
 
 /**
@@ -18,9 +21,8 @@ import java.io.IOException
  * giving lock screen / quick settings media controls for the TV. All transport
  * actions are forwarded to the server's HTTP API; nothing plays locally.
  *
- * The service polls GET /status while running and stops itself after the
- * server has been idle for a while (MainActivity restarts it while the app
- * is in the foreground).
+ * The service bootstraps from GET /status, prefers realtime push delivery,
+ * and polls only while WebSocket and SSE are unavailable.
  */
 @UnstableApi
 class MediaControlService : MediaSessionService() {
@@ -28,12 +30,32 @@ class MediaControlService : MediaSessionService() {
     private val handler = Handler(Looper.getMainLooper())
     private var player: RelayRemotePlayer? = null
     private var session: MediaSession? = null
+    private var realtimeClient: RelayRealtimeClient? = null
+    private var realtimeIdentity: String? = null
+    private var realtimeOwner = 0L
+    private var pushHealthy = false
+    private var pollCall: Call? = null
+    private var pollGeneration = 0L
 
     private var lastActiveAt = SystemClock.elapsedRealtime()
+    private var lastStatusAt = 0L
+    private var lastStatus: RemoteStatus? = null
     private var artworkUrl: String? = null
     private var artworkBytes: ByteArray? = null
 
     private val pollRunnable = Runnable { poll() }
+    private val idleStopRunnable = Runnable { stopIfStillIdle() }
+    private val connectivityManager by lazy { getSystemService(ConnectivityManager::class.java) }
+    private var networkCallbackRegistered = false
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            handler.post {
+                pushHealthy = false
+                realtimeClient?.restart()?.let { realtimeOwner = it }
+                schedulePoll(0)
+            }
+        }
+    }
 
     companion object {
         private const val POLL_PLAYING_MS = 3_000L
@@ -41,6 +63,7 @@ class MediaControlService : MediaSessionService() {
         private const val POLL_IDLE_MS = 10_000L
         private const val POLL_AFTER_COMMAND_MS = 700L
         private const val IDLE_STOP_MS = 5 * 60_000L
+        private const val STALE_STATUS_GRACE_MS = 30_000L
         private const val MAX_ARTWORK_BYTES = 3L * 1024 * 1024
     }
 
@@ -73,6 +96,42 @@ class MediaControlService : MediaSessionService() {
         // manager to track it.
         addSession(session)
 
+        realtimeClient = RelayRealtimeClient(listener = object : RelayRealtimeClient.Listener {
+            override fun onTransportChanged(
+                owner: Long,
+                identity: String,
+                transport: RelayRealtimeClient.Transport?,
+            ) {
+                handler.post {
+                    if (realtimeOwner != owner || realtimeIdentity != identity) return@post
+                    pushHealthy = transport != null
+                    if (pushHealthy) {
+                        handler.removeCallbacks(pollRunnable)
+                    } else if (pollCall == null) {
+                        schedulePoll(0)
+                    }
+                }
+            }
+
+            override fun onEvent(owner: Long, identity: String, event: String, data: JSONObject) {
+                handler.post {
+                    if (realtimeOwner != owner || realtimeIdentity != identity) return@post
+                    applyRealtimeEvent(event, data)
+                }
+            }
+
+            override fun onAuthoritativeRefreshRequired(owner: Long, identity: String) {
+                handler.post {
+                    if (
+                        realtimeOwner == owner &&
+                        realtimeIdentity == identity &&
+                        pollCall == null
+                    ) schedulePoll(0)
+                }
+            }
+        })
+        registerNetworkCallback()
+
         schedulePoll(0)
     }
 
@@ -81,6 +140,7 @@ class MediaControlService : MediaSessionService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
         if (!AppSettings.isMediaControlsEnabled(this)) {
+            realtimeClient?.stop()
             stopSelf()
             return START_NOT_STICKY
         }
@@ -92,6 +152,15 @@ class MediaControlService : MediaSessionService() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        pollGeneration += 1
+        pollCall?.cancel()
+        pollCall = null
+        realtimeIdentity = null
+        realtimeOwner = 0L
+        pushHealthy = false
+        realtimeClient?.close()
+        realtimeClient = null
+        unregisterNetworkCallback()
         session?.let {
             removeSession(it)
             it.release()
@@ -102,8 +171,6 @@ class MediaControlService : MediaSessionService() {
         super.onDestroy()
     }
 
-    private fun activeBase(): String? = HostStore.getActiveBaseUrl(this)?.trimEnd('/')
-
     private fun schedulePoll(delayMs: Long) {
         handler.removeCallbacks(pollRunnable)
         handler.postDelayed(pollRunnable, delayMs)
@@ -111,28 +178,44 @@ class MediaControlService : MediaSessionService() {
 
     private fun poll() {
         if (!AppSettings.isMediaControlsEnabled(this)) {
+            realtimeClient?.stop()
             stopSelf()
             return
         }
-        val base = activeBase()
-        if (base.isNullOrBlank()) {
-            applyStatus(RemoteStatus.IDLE, "RelayTV", base = null)
+        val host = HostStore.getActiveHost(this)
+        val base = host?.let { HostStore.normalizeBaseUrl(it.baseUrl) }
+        if (host == null || base.isNullOrBlank()) {
+            retireRealtime()
+            acceptStatus(RemoteStatus.IDLE, "RelayTV", base = null)
             return
         }
-        Net.client.newCall(Net.get("$base/status")).enqueue(object : Callback {
+        ensureRealtime(host, base)
+        val owner = ++pollGeneration
+        pollCall?.cancel()
+        val call = Net.client.newCall(Net.get("$base/status", host.apiToken))
+        pollCall = call
+        call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                handler.post { applyStatus(RemoteStatus.IDLE, serverName(), base) }
+                handler.post {
+                    if (owner != pollGeneration || pollCall !== call) return@post
+                    pollCall = null
+                    handlePollFailure(host.name.ifBlank { "RelayTV" }, base)
+                }
             }
 
             override fun onResponse(call: Call, response: Response) {
                 val status = response.use { resp ->
-                    if (!resp.isSuccessful) {
-                        RemoteStatus.IDLE
+                    if (resp.isSuccessful) RemoteStatus.parse(resp.body?.string().orEmpty()) else null
+                }
+                handler.post {
+                    if (owner != pollGeneration || pollCall !== call) return@post
+                    pollCall = null
+                    if (status == null) {
+                        handlePollFailure(host.name.ifBlank { "RelayTV" }, base)
                     } else {
-                        RemoteStatus.parse(resp.body?.string().orEmpty())
+                        acceptStatus(status, host.name.ifBlank { "RelayTV" }, base)
                     }
                 }
-                handler.post { applyStatus(status, serverName(), base) }
             }
         })
     }
@@ -140,26 +223,114 @@ class MediaControlService : MediaSessionService() {
     private fun serverName(): String =
         HostStore.getActiveHost(this)?.name?.ifBlank { "RelayTV" } ?: "RelayTV"
 
-    private fun applyStatus(status: RemoteStatus, serverName: String, base: String?) {
+    private fun acceptStatus(status: RemoteStatus, serverName: String, base: String?) {
+        lastStatus = status
+        lastStatusAt = SystemClock.elapsedRealtime()
+        renderStatus(status, serverName, base)
+    }
+
+    private fun renderStatus(status: RemoteStatus, serverName: String, base: String?) {
         val player = player ?: return
 
         if (status.active) {
             lastActiveAt = SystemClock.elapsedRealtime()
-        } else if (SystemClock.elapsedRealtime() - lastActiveAt > IDLE_STOP_MS) {
-            player.updateStatus(RemoteStatus.IDLE, serverName, null)
-            stopSelf()
-            return
+            handler.removeCallbacks(idleStopRunnable)
+        } else {
+            val remaining = IDLE_STOP_MS - (SystemClock.elapsedRealtime() - lastActiveAt)
+            if (remaining <= 0) {
+                player.updateStatus(RemoteStatus.IDLE, serverName, null)
+                stopSelf()
+                return
+            }
+            handler.removeCallbacks(idleStopRunnable)
+            handler.postDelayed(idleStopRunnable, remaining)
         }
 
         ensureArtwork(base, status.thumbnail)
         player.updateStatus(status, serverName, artworkBytes)
 
-        val delay = when {
-            status.playing && !status.paused -> POLL_PLAYING_MS
-            status.active -> POLL_PAUSED_MS
-            else -> POLL_IDLE_MS
+        if (!pushHealthy) {
+            val delay = when {
+                status.playing && !status.paused -> POLL_PLAYING_MS
+                status.active -> POLL_PAUSED_MS
+                else -> POLL_IDLE_MS
+            }
+            schedulePoll(delay)
         }
-        schedulePoll(delay)
+    }
+
+    private fun handlePollFailure(serverName: String, base: String) {
+        val retained = lastStatus
+        if (retained != null && SystemClock.elapsedRealtime() - lastStatusAt <= STALE_STATUS_GRACE_MS) {
+            renderStatus(retained, serverName, base)
+        } else {
+            acceptStatus(RemoteStatus.IDLE, serverName, base)
+        }
+    }
+
+    private fun applyRealtimeEvent(event: String, data: JSONObject) {
+        val host = HostStore.getActiveHost(this) ?: return
+        val base = HostStore.normalizeBaseUrl(host.baseUrl) ?: return
+        val name = host.name.ifBlank { "RelayTV" }
+        when (event) {
+            "status" -> acceptStatus(RemoteStatus.parse(data), name, base)
+            "playback" -> {
+                val current = lastStatus
+                if (current == null || lastStatusAt == 0L) {
+                    schedulePoll(0)
+                } else {
+                    acceptStatus(current.mergePlayback(data), name, base)
+                }
+            }
+            "queue", "jellyfin" -> schedulePoll(POLL_AFTER_COMMAND_MS)
+            "hello", "ping" -> Unit
+        }
+    }
+
+    private fun ensureRealtime(host: RelayHost, base: String) {
+        val identity = "${host.id}|$base|${host.apiToken}"
+        if (realtimeIdentity == identity) return
+        pollGeneration += 1
+        pollCall?.cancel()
+        pollCall = null
+        realtimeIdentity = identity
+        pushHealthy = false
+        realtimeOwner = realtimeClient?.start(
+            RelayRealtimeClient.Config(
+                identity = identity,
+                baseUrl = base,
+                apiToken = host.apiToken,
+            )
+        ) ?: 0L
+    }
+
+    private fun retireRealtime() {
+        realtimeIdentity = null
+        realtimeOwner = 0L
+        pushHealthy = false
+        realtimeClient?.stop()
+    }
+
+    private fun stopIfStillIdle() {
+        val current = lastStatus ?: return
+        if (!current.active && SystemClock.elapsedRealtime() - lastActiveAt >= IDLE_STOP_MS) {
+            player?.updateStatus(RemoteStatus.IDLE, serverName(), null)
+            stopSelf()
+        }
+    }
+
+    private fun registerNetworkCallback() {
+        if (networkCallbackRegistered) return
+        runCatching {
+            connectivityManager.registerDefaultNetworkCallback(networkCallback)
+            networkCallbackRegistered = true
+        }
+    }
+
+    private fun unregisterNetworkCallback() {
+        if (!networkCallbackRegistered) return
+        runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
+        networkCallbackRegistered = false
     }
 
     /** Resolve the thumbnail to an absolute URL and fetch it once per URL change. */
@@ -196,8 +367,7 @@ class MediaControlService : MediaSessionService() {
                     handler.post {
                         if (artworkUrl == absolute) {
                             artworkBytes = bytes
-                            // Re-render the notification with artwork right away.
-                            schedulePoll(0)
+                            lastStatus?.let { renderStatus(it, serverName(), base) }
                         }
                     }
                 }
