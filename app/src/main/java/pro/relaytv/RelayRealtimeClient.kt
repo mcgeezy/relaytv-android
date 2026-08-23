@@ -22,6 +22,8 @@ import kotlin.random.Random
 class RelayRealtimeClient(
     private val requestClient: OkHttpClient = Net.client,
     private val streamingClient: OkHttpClient = Net.streamingClient,
+    private val webSocketFactory: WebSocket.Factory = streamingClient,
+    private val eventSourceFactory: EventSource.Factory = EventSources.createFactory(streamingClient),
     private val capabilityRefreshMs: Long = CAPABILITY_REFRESH_MS,
     private val listener: Listener,
 ) {
@@ -57,13 +59,14 @@ class RelayRealtimeClient(
     private val scheduler = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "relaytv-realtime-retry").apply { isDaemon = true }
     }
-    private val eventSourceFactory = EventSources.createFactory(streamingClient)
     private var generation = 0L
     private var config: Config? = null
     private var capabilities: Capabilities? = null
     private var capabilityCall: Call? = null
     private var webSocket: WebSocket? = null
+    private var webSocketAttempt: Any? = null
     private var eventSource: EventSource? = null
+    private var eventSourceAttempt: Any? = null
     private var retryFuture: ScheduledFuture<*>? = null
     private var capabilityRefreshFuture: ScheduledFuture<*>? = null
     private var activeTransport: Transport? = null
@@ -173,28 +176,44 @@ class RelayRealtimeClient(
         ).newBuilder()
             .header("Sec-WebSocket-Protocol", REALTIME_SUBPROTOCOL)
             .build()
+        val attempt = Any()
+        val installed = synchronized(this) {
+            if (
+                !ownsLocked(owner) ||
+                webSocket != null ||
+                webSocketAttempt != null ||
+                eventSource != null ||
+                eventSourceAttempt != null
+            ) {
+                false
+            } else {
+                webSocketAttempt = attempt
+                true
+            }
+        }
+        if (!installed) return
         var receivedHello = false
         val callback = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 if (response.header("Sec-WebSocket-Protocol") != REALTIME_SUBPROTOCOL) {
-                    failWebSocket(owner, webSocket)
+                    failWebSocket(owner, attempt, webSocket)
                 }
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 val envelope = parseEnvelope(text)
                 if (envelope == null) {
-                    failWebSocket(owner, webSocket)
+                    failWebSocket(owner, attempt, webSocket)
                     return
                 }
                 synchronized(this@RelayRealtimeClient) {
-                    if (this@RelayRealtimeClient.webSocket !== webSocket || !ownsLocked(owner)) return
+                    if (!ownsWebSocketAttemptLocked(owner, attempt)) return
                     if (!receivedHello) {
                         if (
                             envelope.event != "hello" ||
                             envelope.data.optInt("protocol_version", -1) != PROTOCOL_VERSION
                         ) {
-                            failWebSocketLocked(owner, webSocket)
+                            failWebSocketLocked(owner, attempt, webSocket)
                             return
                         }
                         receivedHello = true
@@ -203,7 +222,7 @@ class RelayRealtimeClient(
                         setTransportLocked(owner, Transport.WEBSOCKET)
                         listener.onAuthoritativeRefreshRequired(owner, currentIdentityLocked())
                     }
-                    recordSequenceLocked(owner, envelope.sequence)
+                    if (!acceptSequenceLocked(owner, envelope.event, envelope.sequence)) return
                     listener.onEvent(owner, currentIdentityLocked(), envelope.event, envelope.data)
                 }
             }
@@ -213,17 +232,27 @@ class RelayRealtimeClient(
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                failWebSocket(owner, webSocket)
+                failWebSocket(owner, attempt, webSocket)
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 response?.close()
-                failWebSocket(owner, webSocket)
+                failWebSocket(owner, attempt, webSocket)
             }
         }
-        val socket = streamingClient.newWebSocket(request, callback)
+        val socket = try {
+            webSocketFactory.newWebSocket(request, callback)
+        } catch (_: Exception) {
+            failWebSocket(owner, attempt, null)
+            return
+        }
         synchronized(this) {
-            if (!ownsLocked(owner) || webSocket != null || eventSource != null) {
+            if (
+                !ownsWebSocketAttemptLocked(owner, attempt) ||
+                webSocket != null ||
+                eventSource != null ||
+                eventSourceAttempt != null
+            ) {
                 socket.cancel()
                 return
             }
@@ -231,14 +260,15 @@ class RelayRealtimeClient(
         }
     }
 
-    private fun failWebSocket(owner: Long, socket: WebSocket) {
-        synchronized(this) { failWebSocketLocked(owner, socket) }
+    private fun failWebSocket(owner: Long, attempt: Any, socket: WebSocket?) {
+        synchronized(this) { failWebSocketLocked(owner, attempt, socket) }
     }
 
-    private fun failWebSocketLocked(owner: Long, socket: WebSocket) {
-        if (webSocket !== socket || !ownsLocked(owner)) return
-        webSocket = null
-        socket.cancel()
+    private fun failWebSocketLocked(owner: Long, attempt: Any, socket: WebSocket?) {
+        if (!ownsWebSocketAttemptLocked(owner, attempt)) return
+        webSocketAttempt = null
+        if (webSocket === socket) webSocket = null
+        socket?.cancel()
         setTransportLocked(owner, null)
         val available = capabilities ?: return
         scheduler.execute { connectSseOrRetry(owner, available) }
@@ -264,11 +294,26 @@ class RelayRealtimeClient(
             .header("Accept", "text/event-stream")
             .header("Cache-Control", "no-cache")
             .build()
-        lateinit var created: EventSource
+        val attempt = Any()
+        val installed = synchronized(this) {
+            if (
+                !ownsLocked(owner) ||
+                webSocket != null ||
+                webSocketAttempt != null ||
+                eventSource != null ||
+                eventSourceAttempt != null
+            ) {
+                false
+            } else {
+                eventSourceAttempt = attempt
+                true
+            }
+        }
+        if (!installed) return
         val callback = object : EventSourceListener() {
             override fun onOpen(eventSource: EventSource, response: Response) {
                 synchronized(this@RelayRealtimeClient) {
-                    if (this@RelayRealtimeClient.eventSource !== eventSource || !ownsLocked(owner)) return
+                    if (!ownsEventSourceAttemptLocked(owner, attempt)) return
                     failureCount = 0
                     setTransportLocked(owner, Transport.SSE)
                     listener.onAuthoritativeRefreshRequired(owner, currentIdentityLocked())
@@ -285,23 +330,33 @@ class RelayRealtimeClient(
                 val event = type?.trim().orEmpty().ifBlank { payload.optString("type") }
                 if (event.isBlank()) return
                 synchronized(this@RelayRealtimeClient) {
-                    if (this@RelayRealtimeClient.eventSource !== eventSource || !ownsLocked(owner)) return
+                    if (!ownsEventSourceAttemptLocked(owner, attempt)) return
                     listener.onEvent(owner, currentIdentityLocked(), event, payload)
                 }
             }
 
             override fun onClosed(eventSource: EventSource) {
-                failSse(owner, eventSource)
+                failSse(owner, attempt, eventSource)
             }
 
             override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
                 response?.close()
-                failSse(owner, eventSource)
+                failSse(owner, attempt, eventSource)
             }
         }
-        created = eventSourceFactory.newEventSource(request, callback)
+        val created = try {
+            eventSourceFactory.newEventSource(request, callback)
+        } catch (_: Exception) {
+            failSse(owner, attempt, null)
+            return
+        }
         synchronized(this) {
-            if (!ownsLocked(owner) || webSocket != null || eventSource != null) {
+            if (
+                !ownsEventSourceAttemptLocked(owner, attempt) ||
+                webSocket != null ||
+                webSocketAttempt != null ||
+                eventSource != null
+            ) {
                 created.cancel()
                 return
             }
@@ -309,11 +364,12 @@ class RelayRealtimeClient(
         }
     }
 
-    private fun failSse(owner: Long, source: EventSource) {
+    private fun failSse(owner: Long, attempt: Any, source: EventSource?) {
         synchronized(this) {
-            if (eventSource !== source || !ownsLocked(owner)) return
-            eventSource = null
-            source.cancel()
+            if (!ownsEventSourceAttemptLocked(owner, attempt)) return
+            eventSourceAttempt = null
+            if (eventSource === source) eventSource = null
+            source?.cancel()
             capabilityRefreshFuture?.cancel(false)
             capabilityRefreshFuture = null
             capabilities = null
@@ -328,6 +384,7 @@ class RelayRealtimeClient(
             val shouldDiscover = synchronized(this) {
                 if (!ownsLocked(owner) || eventSource !== source) return@schedule
                 eventSource = null
+                eventSourceAttempt = null
                 capabilityRefreshFuture = null
                 capabilities = null
                 setTransportLocked(owner, null)
@@ -354,12 +411,20 @@ class RelayRealtimeClient(
         }, delay, TimeUnit.MILLISECONDS)
     }
 
-    private fun recordSequenceLocked(owner: Long, sequence: Long) {
-        if (sequence <= 0) return
+    private fun acceptSequenceLocked(owner: Long, event: String, sequence: Long): Boolean {
+        if (sequence <= 0) return true
+        if (event == "ping") {
+            if (lastSequence > 0 && sequence > lastSequence + 1) {
+                listener.onAuthoritativeRefreshRequired(owner, currentIdentityLocked())
+            }
+            return true
+        }
+        if (lastSequence > 0 && sequence <= lastSequence) return false
         if (lastSequence > 0 && sequence > lastSequence + 1) {
             listener.onAuthoritativeRefreshRequired(owner, currentIdentityLocked())
         }
-        lastSequence = maxOf(lastSequence, sequence)
+        lastSequence = sequence
+        return true
     }
 
     private fun setTransportLocked(owner: Long, next: Transport?) {
@@ -372,13 +437,21 @@ class RelayRealtimeClient(
 
     private fun ownsLocked(owner: Long): Boolean = !closed && generation == owner && config != null
 
+    private fun ownsWebSocketAttemptLocked(owner: Long, attempt: Any): Boolean =
+        ownsLocked(owner) && webSocketAttempt === attempt
+
+    private fun ownsEventSourceAttemptLocked(owner: Long, attempt: Any): Boolean =
+        ownsLocked(owner) && eventSourceAttempt === attempt
+
     private fun retireLocked() {
         capabilityCall?.cancel()
         capabilityCall = null
         webSocket?.cancel()
         webSocket = null
+        webSocketAttempt = null
         eventSource?.cancel()
         eventSource = null
+        eventSourceAttempt = null
         retryFuture?.cancel(false)
         retryFuture = null
         capabilityRefreshFuture?.cancel(false)

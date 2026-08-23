@@ -29,8 +29,8 @@ internal class MediaStatusState {
     }
 
     fun mergeRealtimePlayback(patch: JSONObject, nowMs: Long): RemoteStatus? {
-        revision += 1
         val current = status ?: return null
+        revision += 1
         return current.mergePlayback(patch).also { record(it, nowMs) }
     }
 

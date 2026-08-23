@@ -63,4 +63,75 @@ class MediaStatusStateTest {
         assertTrue(state.status?.paused == true)
         assertTrue(state.status?.positionSec == 25.0)
     }
+
+    @Test
+    fun unmergeablePlaybackPreservesAuthoritativeBootstrapPoll() {
+        val state = MediaStatusState()
+        val bootstrap = state.beginPoll()
+
+        assertNull(
+            state.mergeRealtimePlayback(
+                JSONObject("""{"playing":true,"position":12.0}"""),
+                nowMs = 100,
+            )
+        )
+        assertTrue(state.isCurrent(bootstrap))
+        assertTrue(
+            state.acceptPoll(
+                bootstrap,
+                RemoteStatus(playing = true, title = "Bootstrapped"),
+                nowMs = 200,
+            )
+        )
+    }
+
+    @Test
+    fun healthyPushNudgesDoNotSchedulePolls() {
+        assertFalse(
+            shouldScheduleMediaPoll(
+                identityChanged = false,
+                pushHealthy = true,
+                pollInFlight = false,
+                hasAuthoritativeStatus = true,
+            )
+        )
+        assertTrue(
+            shouldScheduleMediaPoll(
+                identityChanged = true,
+                pushHealthy = true,
+                pollInFlight = false,
+                hasAuthoritativeStatus = false,
+            )
+        )
+        assertTrue(
+            shouldScheduleMediaPoll(
+                identityChanged = false,
+                pushHealthy = false,
+                pollInFlight = false,
+                hasAuthoritativeStatus = true,
+            )
+        )
+    }
+
+    @Test
+    fun callbackMustMatchConnectionAndSelectedHost() {
+        assertTrue(
+            realtimeCallbackMatchesActiveHost(
+                callbackOwner = 2,
+                activeOwner = 2,
+                callbackIdentity = "server-b",
+                connectionIdentity = "server-b",
+                selectedIdentity = "server-b",
+            )
+        )
+        assertFalse(
+            realtimeCallbackMatchesActiveHost(
+                callbackOwner = 2,
+                activeOwner = 2,
+                callbackIdentity = "server-a",
+                connectionIdentity = "server-a",
+                selectedIdentity = "server-b",
+            )
+        )
+    }
 }

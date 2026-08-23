@@ -102,7 +102,7 @@ class MediaControlService : MediaSessionService() {
                 transport: RelayRealtimeClient.Transport?,
             ) {
                 handler.post {
-                    if (realtimeOwner != owner || realtimeIdentity != identity) return@post
+                    if (!acceptRealtimeCallback(owner, identity)) return@post
                     pushHealthy = transport != null
                     if (pushHealthy) {
                         handler.removeCallbacks(pollRunnable)
@@ -114,7 +114,7 @@ class MediaControlService : MediaSessionService() {
 
             override fun onEvent(owner: Long, identity: String, event: String, data: JSONObject) {
                 handler.post {
-                    if (realtimeOwner != owner || realtimeIdentity != identity) return@post
+                    if (!acceptRealtimeCallback(owner, identity)) return@post
                     applyRealtimeEvent(event, data)
                 }
             }
@@ -122,8 +122,7 @@ class MediaControlService : MediaSessionService() {
             override fun onAuthoritativeRefreshRequired(owner: Long, identity: String) {
                 handler.post {
                     if (
-                        realtimeOwner == owner &&
-                        realtimeIdentity == identity &&
+                        acceptRealtimeCallback(owner, identity) &&
                         pollCall == null
                     ) schedulePoll(0)
                 }
@@ -131,7 +130,7 @@ class MediaControlService : MediaSessionService() {
         })
         registerNetworkCallback()
 
-        schedulePoll(0)
+        synchronizeActiveHost()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
@@ -145,7 +144,7 @@ class MediaControlService : MediaSessionService() {
         }
         // Keep the idle timer fresh while the app keeps nudging us.
         lastActiveAt = SystemClock.elapsedRealtime()
-        schedulePoll(0)
+        synchronizeActiveHost()
         return START_NOT_STICKY
     }
 
@@ -295,7 +294,7 @@ class MediaControlService : MediaSessionService() {
             "playback" -> {
                 val status = mediaState.mergeRealtimePlayback(data, SystemClock.elapsedRealtime())
                 if (status == null) {
-                    schedulePoll(0)
+                    if (pollCall == null) schedulePoll(0)
                 } else {
                     renderStatus(status, name, base)
                 }
@@ -305,9 +304,54 @@ class MediaControlService : MediaSessionService() {
         }
     }
 
-    private fun ensureRealtime(host: RelayHost, base: String) {
-        val identity = "${host.id}|$base|${host.apiToken}"
-        if (realtimeIdentity == identity) return
+    private fun synchronizeActiveHost() {
+        val host = HostStore.getActiveHost(this)
+        val base = host?.let { HostStore.normalizeBaseUrl(it.baseUrl) }
+        if (host == null || base.isNullOrBlank()) {
+            retireRealtime()
+            clearMediaState("RelayTV")
+            renderStatus(RemoteStatus.IDLE, "RelayTV", base = null)
+            stopSelf()
+            return
+        }
+        val identityChanged = ensureRealtime(host, base)
+        if (
+            shouldScheduleMediaPoll(
+                identityChanged = identityChanged,
+                pushHealthy = pushHealthy,
+                pollInFlight = pollCall != null,
+                hasAuthoritativeStatus = mediaState.status != null,
+            )
+        ) schedulePoll(0)
+    }
+
+    private fun acceptRealtimeCallback(owner: Long, identity: String): Boolean {
+        val selectedIdentity = activeRealtimeIdentity()
+        if (
+            realtimeCallbackMatchesActiveHost(
+                callbackOwner = owner,
+                activeOwner = realtimeOwner,
+                callbackIdentity = identity,
+                connectionIdentity = realtimeIdentity,
+                selectedIdentity = selectedIdentity,
+            )
+        ) return true
+        if (realtimeOwner == owner && realtimeIdentity == identity) synchronizeActiveHost()
+        return false
+    }
+
+    private fun activeRealtimeIdentity(): String? {
+        val host = HostStore.getActiveHost(this) ?: return null
+        val base = HostStore.normalizeBaseUrl(host.baseUrl) ?: return null
+        return identityFor(host, base)
+    }
+
+    private fun identityFor(host: RelayHost, base: String): String =
+        "${host.id}|$base|${host.apiToken}"
+
+    private fun ensureRealtime(host: RelayHost, base: String): Boolean {
+        val identity = identityFor(host, base)
+        if (realtimeIdentity == identity) return false
         pollGeneration += 1
         pollCall?.cancel()
         pollCall = null
@@ -321,6 +365,7 @@ class MediaControlService : MediaSessionService() {
                 apiToken = host.apiToken,
             )
         ) ?: 0L
+        return true
     }
 
     private fun retireRealtime() {

@@ -294,8 +294,12 @@ class MainActivity : AppCompatActivity() {
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     private fun ensureMediaControlService() {
         if (!AppSettings.isMediaControlsEnabled(this)) return
-        if (HostStore.getActiveBaseUrl(this).isNullOrBlank()) return
         runCatching { startService(Intent(this, MediaControlService::class.java)) }
+    }
+
+    private fun activateHost(host: RelayHost) {
+        HostStore.setActiveHostId(this, host.id)
+        ensureMediaControlService()
     }
 
     override fun onPause() {
@@ -639,7 +643,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 val pos = list.checkedItemPosition.coerceAtLeast(0)
                 val chosen = hosts.getOrNull(pos) ?: hosts.first()
-                HostStore.setActiveHostId(this, chosen.id)
+                activateHost(chosen)
                 toolbar.subtitle = chosen.name
                 loadServerBase(chosen.baseUrl, forcePickerOnFailure = true, manualRefresh = false)
                 d.dismiss()
@@ -669,7 +673,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     showDiscoveredServersDialog(servers) { selected ->
                         val host = upsertDiscoveredServer(selected)
-                        HostStore.setActiveHostId(this@MainActivity, host.id)
+                        activateHost(host)
                         toolbar.subtitle = host.name
                         hostStatuses.remove(host.id)
                         statusChecksInFlight.remove(host.id)
@@ -692,7 +696,7 @@ class MainActivity : AppCompatActivity() {
         list.setOnItemClickListener { _, _, position, _ ->
             val hosts = HostStore.loadHosts(this)
             val chosen = hosts.getOrNull(position) ?: return@setOnItemClickListener
-            HostStore.setActiveHostId(this, chosen.id)
+            activateHost(chosen)
             toolbar.subtitle = chosen.name
             renderActiveServer(chosen.id)
             loadServerBase(chosen.baseUrl, forcePickerOnFailure = true, manualRefresh = false)
@@ -818,7 +822,7 @@ class MainActivity : AppCompatActivity() {
                                         updated
                                     }
 
-                                    HostStore.setActiveHostId(this@MainActivity, host.id)
+                                    activateHost(host)
                                     hostStatuses.remove(host.id)
                                     statusChecksInFlight.remove(host.id)
                                     refresh(host.id)
@@ -854,6 +858,7 @@ class MainActivity : AppCompatActivity() {
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Remove") { _, _ ->
                     HostStore.remove(this, existing.id)
+                    ensureMediaControlService()
                     hostStatuses.remove(existing.id)
                     refresh(HostStore.getActiveHostId(this))
                 }
