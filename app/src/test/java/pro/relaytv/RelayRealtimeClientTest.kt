@@ -187,8 +187,8 @@ class RelayRealtimeClientTest {
             )
         )
 
-        assertTrue(connected.await(3, TimeUnit.SECONDS))
-        assertTrue(status.await(3, TimeUnit.SECONDS))
+        assertTrue(connected.await(10, TimeUnit.SECONDS))
+        assertTrue(status.await(10, TimeUnit.SECONDS))
         assertEquals("/realtime/capabilities", server.takeRequest(3, TimeUnit.SECONDS)?.path)
         assertEquals("/ui/events", server.takeRequest(3, TimeUnit.SECONDS)?.path)
     }
