@@ -21,7 +21,7 @@ RelayTV Android may process the following categories of data in order to operate
 4. Device-local notification data
    - Notification text used to confirm a queue or play action
 5. Playback status data
-   - Now-playing metadata (title, artwork, playback position, volume) fetched from your selected RelayTV server to render system media controls
+   - Now-playing metadata (title, artwork, playback position, volume) received from your selected RelayTV server by WebSocket, Server-Sent Events, or HTTP polling to render system media controls
 
 ## How The App Uses Data
 
@@ -32,7 +32,7 @@ RelayTV Android uses the data above only to:
 3. Send shared links to RelayTV endpoints such as `/smart` or `/play_now`
 4. Discover compatible RelayTV servers on your local network
 5. Show local notifications about share results and reconnect state
-6. Show optional system media controls (lock screen / quick settings) that mirror and control playback on your selected server
+6. Show optional system media controls (lock screen / quick settings) that mirror and control playback on your selected server, preferring local push updates with HTTP polling fallback
 7. Authenticate control, share, upload, and media-control requests when your RelayTV server requires an API token
 
 ## Data Storage

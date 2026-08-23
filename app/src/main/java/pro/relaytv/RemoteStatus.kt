@@ -27,6 +27,10 @@ data class RemoteStatus(
             } catch (_: Exception) {
                 return IDLE
             }
+            return parse(o)
+        }
+
+        fun parse(o: JSONObject): RemoteStatus {
 
             fun num(vararg keys: String): Double? {
                 for (k in keys) {
@@ -61,4 +65,28 @@ data class RemoteStatus(
             )
         }
     }
+
+    /** Merge the compact realtime playback snapshot over the last full status. */
+    fun mergePlayback(patch: JSONObject): RemoteStatus = copy(
+        playing = if (patch.has("playing")) patch.optBoolean("playing") else playing,
+        paused = if (patch.has("paused")) patch.optBoolean("paused") else paused,
+        positionSec = patch.optNullableDouble("position") ?: positionSec,
+        durationSec = patch.optNullableDouble("duration") ?: durationSec,
+        title = patch.optNullableString("title") ?: title,
+        thumbnail = patch.optNullableString("thumbnail_local", "thumbnail", "thumb") ?: thumbnail,
+        volumePercent = patch.optNullableDouble("volume")?.toInt()?.coerceIn(0, 100) ?: volumePercent,
+    )
+}
+
+private fun JSONObject.optNullableDouble(key: String): Double? {
+    if (!has(key) || isNull(key)) return null
+    return optDouble(key, Double.NaN).takeUnless { it.isNaN() }
+}
+
+private fun JSONObject.optNullableString(vararg keys: String): String? {
+    keys.forEach { key ->
+        val value = optString(key, "")
+        if (value.isNotBlank() && value != "null") return value
+    }
+    return null
 }

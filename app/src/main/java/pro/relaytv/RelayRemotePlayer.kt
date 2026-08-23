@@ -14,8 +14,9 @@ import com.google.common.util.concurrent.ListenableFuture
 
 /**
  * A [SimpleBasePlayer] that mirrors playback happening on the RelayTV server.
- * It never plays audio locally: state comes from polling /status and every
- * transport control is forwarded to the server over HTTP via [Listener].
+ * It never plays audio locally: state comes from realtime snapshots or
+ * /status polling, and every transport control is forwarded to the server
+ * over HTTP via [Listener].
  */
 @UnstableApi
 class RelayRemotePlayer(
@@ -36,7 +37,7 @@ class RelayRemotePlayer(
     private var serverName: String = "RelayTV"
     private var artworkBytes: ByteArray? = null
 
-    // Anchor for extrapolating the playback position between polls.
+    // Anchor for extrapolating the playback position between server updates.
     private var anchorPositionMs: Long = 0
     private var anchorElapsedRealtime: Long = SystemClock.elapsedRealtime()
 

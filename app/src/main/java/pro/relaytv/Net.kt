@@ -26,6 +26,12 @@ object Net {
         .writeTimeout(20, TimeUnit.MINUTES)
         .build()
 
+    /** Dedicated client for long-lived WebSocket and SSE reads. */
+    val streamingClient: OkHttpClient = client.newBuilder()
+        .callTimeout(0, TimeUnit.MILLISECONDS)
+        .readTimeout(0, TimeUnit.MILLISECONDS)
+        .build()
+
     fun get(url: String, apiToken: String? = null): Request = Request.Builder()
         .url(url)
         .applyBearerToken(apiToken)
