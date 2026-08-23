@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/mcgeezy/relaytv-android/compare/v1.3.2...v1.4.0) (2026-08-23)
+
+
+### Features
+
+* prefer realtime WebSocket media updates ([#9](https://github.com/mcgeezy/relaytv-android/issues/9)) ([f1ac900](https://github.com/mcgeezy/relaytv-android/commit/f1ac9005e8b6b6d5f587c6c54242f46179e3de87))
+
 ## [1.3.2](https://github.com/mcgeezy/relaytv-android/compare/v1.3.1...v1.3.2) (2026-07-24)
 
 
