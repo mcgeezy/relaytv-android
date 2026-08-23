@@ -1,6 +1,7 @@
 package pro.relaytv
 
 import org.json.JSONObject
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -133,5 +134,32 @@ class MediaStatusStateTest {
                 selectedIdentity = "server-b",
             )
         )
+    }
+
+    @Test
+    fun refreshRequestedDuringPollRequiresFollowUp() {
+        val state = AuthoritativeRefreshState()
+        state.request()
+
+        state.beginPoll()
+        assertFalse(state.followUpRequired())
+
+        state.request()
+        assertTrue(state.followUpRequired())
+
+        state.beginPoll()
+        assertFalse(state.followUpRequired())
+    }
+
+    @Test
+    fun retainedStatusIsRecheckedUntilItExpires() {
+        val state = MediaStatusState()
+        state.acceptRealtime(RemoteStatus(playing = true), nowMs = 100)
+
+        assertEquals(29_999L, state.remainingRetentionMs(nowMs = 101, graceMs = 30_000))
+        assertEquals(3_000L, retainedStatusRecheckDelayMs(29_999, 3_000))
+        assertEquals(1L, state.remainingRetentionMs(nowMs = 30_099, graceMs = 30_000))
+        assertEquals(2L, retainedStatusRecheckDelayMs(1, 3_000))
+        assertNull(state.retained(nowMs = 30_101, graceMs = 30_000))
     }
 }

@@ -37,6 +37,7 @@ class MediaControlService : MediaSessionService() {
     private var pollCall: Call? = null
     private var pollGeneration = 0L
     private val mediaState = MediaStatusState()
+    private val authoritativeRefreshState = AuthoritativeRefreshState()
 
     private var lastActiveAt = SystemClock.elapsedRealtime()
     private var artworkUrl: String? = null
@@ -121,10 +122,9 @@ class MediaControlService : MediaSessionService() {
 
             override fun onAuthoritativeRefreshRequired(owner: Long, identity: String) {
                 handler.post {
-                    if (
-                        acceptRealtimeCallback(owner, identity) &&
-                        pollCall == null
-                    ) schedulePoll(0)
+                    if (!acceptRealtimeCallback(owner, identity)) return@post
+                    authoritativeRefreshState.request()
+                    if (pollCall == null) schedulePoll(0)
                 }
             }
         })
@@ -156,6 +156,7 @@ class MediaControlService : MediaSessionService() {
         realtimeIdentity = null
         realtimeOwner = 0L
         pushHealthy = false
+        authoritativeRefreshState.reset()
         realtimeClient?.close()
         realtimeClient = null
         unregisterNetworkCallback()
@@ -191,6 +192,7 @@ class MediaControlService : MediaSessionService() {
         ensureRealtime(host, base)
         val owner = ++pollGeneration
         val stateOwner = mediaState.beginPoll()
+        authoritativeRefreshState.beginPoll()
         pollCall?.cancel()
         val call = Net.client.newCall(Net.get("$base/status", host.apiToken))
         pollCall = call
@@ -200,10 +202,11 @@ class MediaControlService : MediaSessionService() {
                     if (owner != pollGeneration || pollCall !== call) return@post
                     pollCall = null
                     if (!mediaState.isCurrent(stateOwner)) {
-                        if (!pushHealthy) schedulePoll(0)
+                        if (!schedulePendingAuthoritativeRefresh() && !pushHealthy) schedulePoll(0)
                         return@post
                     }
                     handlePollFailure(host.name.ifBlank { "RelayTV" }, base)
+                    schedulePendingAuthoritativeRefresh()
                 }
             }
 
@@ -215,7 +218,7 @@ class MediaControlService : MediaSessionService() {
                     if (owner != pollGeneration || pollCall !== call) return@post
                     pollCall = null
                     if (!mediaState.isCurrent(stateOwner)) {
-                        if (!pushHealthy) schedulePoll(0)
+                        if (!schedulePendingAuthoritativeRefresh() && !pushHealthy) schedulePoll(0)
                         return@post
                     }
                     if (status == null) {
@@ -231,6 +234,7 @@ class MediaControlService : MediaSessionService() {
                             renderStatus(status, host.name.ifBlank { "RelayTV" }, base)
                         }
                     }
+                    schedulePendingAuthoritativeRefresh()
                 }
             }
         })
@@ -270,13 +274,22 @@ class MediaControlService : MediaSessionService() {
     }
 
     private fun handlePollFailure(serverName: String, base: String) {
-        val retained = mediaState.retained(SystemClock.elapsedRealtime(), STALE_STATUS_GRACE_MS)
+        val now = SystemClock.elapsedRealtime()
+        val retained = mediaState.retained(now, STALE_STATUS_GRACE_MS)
         if (retained != null) {
             renderStatus(retained, serverName, base)
+            val remaining = mediaState.remainingRetentionMs(now, STALE_STATUS_GRACE_MS) ?: 0L
+            schedulePoll(retainedStatusRecheckDelayMs(remaining, POLL_PLAYING_MS))
         } else {
             mediaState.reset()
             renderStatus(RemoteStatus.IDLE, serverName, base)
         }
+    }
+
+    private fun schedulePendingAuthoritativeRefresh(): Boolean {
+        if (!authoritativeRefreshState.followUpRequired()) return false
+        schedulePoll(0)
+        return true
     }
 
     private fun applyRealtimeEvent(event: String, data: JSONObject) {
@@ -355,6 +368,7 @@ class MediaControlService : MediaSessionService() {
         pollGeneration += 1
         pollCall?.cancel()
         pollCall = null
+        authoritativeRefreshState.reset()
         clearMediaState(host.name.ifBlank { "RelayTV" }, refreshIdleDeadline = true)
         realtimeIdentity = identity
         pushHealthy = false
@@ -375,6 +389,7 @@ class MediaControlService : MediaSessionService() {
         realtimeIdentity = null
         realtimeOwner = 0L
         pushHealthy = false
+        authoritativeRefreshState.reset()
         realtimeClient?.stop()
     }
 

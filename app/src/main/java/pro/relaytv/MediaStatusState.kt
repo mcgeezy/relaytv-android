@@ -35,7 +35,12 @@ internal class MediaStatusState {
     }
 
     fun retained(nowMs: Long, graceMs: Long): RemoteStatus? =
-        status?.takeIf { statusAtMs > 0L && nowMs - statusAtMs <= graceMs }
+        status?.takeIf { remainingRetentionMs(nowMs, graceMs) != null }
+
+    fun remainingRetentionMs(nowMs: Long, graceMs: Long): Long? {
+        if (status == null || statusAtMs <= 0L) return null
+        return (graceMs - (nowMs - statusAtMs)).takeIf { it >= 0L }
+    }
 
     fun reset() {
         revision += 1

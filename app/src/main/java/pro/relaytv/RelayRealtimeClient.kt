@@ -72,6 +72,7 @@ class RelayRealtimeClient(
     private var activeTransport: Transport? = null
     private var failureCount = 0
     private var lastSequence = 0L
+    private var highestRefreshRequestedSequence = 0L
     private var closed = false
 
     @Synchronized
@@ -83,6 +84,7 @@ class RelayRealtimeClient(
         capabilities = null
         failureCount = 0
         lastSequence = 0
+        highestRefreshRequestedSequence = 0
         discover(generation)
         return generation
     }
@@ -98,6 +100,7 @@ class RelayRealtimeClient(
         config = null
         capabilities = null
         lastSequence = 0
+        highestRefreshRequestedSequence = 0
     }
 
     @Synchronized
@@ -218,6 +221,7 @@ class RelayRealtimeClient(
                         }
                         receivedHello = true
                         lastSequence = 0
+                        highestRefreshRequestedSequence = 0
                         failureCount = 0
                         setTransportLocked(owner, Transport.WEBSOCKET)
                         listener.onAuthoritativeRefreshRequired(owner, currentIdentityLocked())
@@ -414,17 +418,21 @@ class RelayRealtimeClient(
     private fun acceptSequenceLocked(owner: Long, event: String, sequence: Long): Boolean {
         if (sequence <= 0) return true
         if (event == "ping") {
-            if (lastSequence > 0 && sequence > lastSequence + 1) {
-                listener.onAuthoritativeRefreshRequired(owner, currentIdentityLocked())
-            }
+            if (sequence > lastSequence) requestSequenceRefreshLocked(owner, sequence)
             return true
         }
         if (lastSequence > 0 && sequence <= lastSequence) return false
         if (lastSequence > 0 && sequence > lastSequence + 1) {
-            listener.onAuthoritativeRefreshRequired(owner, currentIdentityLocked())
+            requestSequenceRefreshLocked(owner, sequence)
         }
         lastSequence = sequence
         return true
+    }
+
+    private fun requestSequenceRefreshLocked(owner: Long, sequence: Long) {
+        if (sequence <= highestRefreshRequestedSequence) return
+        highestRefreshRequestedSequence = sequence
+        listener.onAuthoritativeRefreshRequired(owner, currentIdentityLocked())
     }
 
     private fun setTransportLocked(owner: Long, next: Transport?) {

@@ -20,6 +20,7 @@ import java.io.IOException
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class RelayRealtimeClientTest {
     private val servers = mutableListOf<MockWebServer>()
@@ -383,6 +384,59 @@ class RelayRealtimeClientTest {
         assertTrue(queueDelivered.await(3, TimeUnit.SECONDS))
         assertFalse(delivered.contains("playback"))
         assertTrue(delivered.containsAll(listOf("hello", "status", "queue")))
+    }
+
+    @Test
+    fun pingsAheadOfAppliedStateRequestOneRefreshPerCheckpoint() {
+        val server = MockWebServer().also {
+            it.start()
+            servers += it
+        }
+        server.enqueue(capabilityResponse())
+        server.enqueue(
+            MockResponse()
+                .setHeader("Sec-WebSocket-Protocol", RelayRealtimeClient.REALTIME_SUBPROTOCOL)
+                .withWebSocketUpgrade(object : WebSocketListener() {
+                    override fun onOpen(webSocket: WebSocket, response: Response) {
+                        webSocket.send(
+                            """{"version":1,"event":"hello","sequence":0,"data":{"protocol_version":1}}"""
+                        )
+                        webSocket.send(
+                            """{"version":1,"event":"status","sequence":41,"data":{"playing":true}}"""
+                        )
+                        webSocket.send(
+                            """{"version":1,"event":"ping","sequence":42,"data":{"checkpoint":42}}"""
+                        )
+                        webSocket.send(
+                            """{"version":1,"event":"ping","sequence":42,"data":{"checkpoint":42}}"""
+                        )
+                        webSocket.send(
+                            """{"version":1,"event":"ping","sequence":43,"data":{"checkpoint":43}}"""
+                        )
+                    }
+                })
+        )
+        val refreshCount = AtomicInteger()
+        val finalPing = CountDownLatch(1)
+        val client = RelayRealtimeClient(listener = object : EmptyRealtimeListener() {
+            override fun onEvent(
+                owner: Long,
+                identity: String,
+                event: String,
+                data: JSONObject,
+            ) {
+                if (event == "ping" && data.optInt("checkpoint") == 43) finalPing.countDown()
+            }
+
+            override fun onAuthoritativeRefreshRequired(owner: Long, identity: String) {
+                refreshCount.incrementAndGet()
+            }
+        }).also { clients += it }
+
+        client.start(configFor(server, "ping-checkpoints"))
+
+        assertTrue(finalPing.await(3, TimeUnit.SECONDS))
+        assertEquals(3, refreshCount.get())
     }
 
     private fun capabilityServer(): MockWebServer = MockWebServer().also {
