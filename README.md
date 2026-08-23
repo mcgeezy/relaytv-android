@@ -163,6 +163,9 @@ description.
 - Android 15 target (`targetSdk 35`)
 - A reachable RelayTV server on a local network, VPN, or trusted HTTPS URL
 - Optional `_relaytv._tcp` mDNS advertisement for automatic discovery
+- Current servers use the versioned WebSocket transport; older servers without
+  `/realtime/capabilities` remain supported through SSE and adaptive polling,
+  so server and app upgrades do not need to be synchronized
 
 The current semantic version is tracked in [`version.txt`](version.txt). Gradle
 derives a monotonic Android `versionCode` from its `major.minor.patch` value.
@@ -245,6 +248,9 @@ that token.
 Signing credentials remain in GitHub Actions secrets. The **Build Android
 release** workflow also supports manual dispatch to retry an existing draft
 release by tag and commit SHA.
+
+Complete the [release checklist](docs/RELEASE_CHECKLIST.md), including
+physical-device connectivity and fallback verification, before publishing.
 
 ## Companion projects
 

@@ -42,6 +42,8 @@ Use this checklist before cutting a public release or uploading a new Play Conso
 ## App-Specific Verification
 
 1. Confirm manual server entry still works for both HTTP and HTTPS RelayTV servers.
+   - For proxied HTTPS, confirm `/ui/ws` upgrades to `wss://` and remains
+     connected through the proxy's idle timeout.
 2. Confirm LAN discovery finds `_relaytv._tcp` services on the local network.
 3. Confirm both Android share targets work:
    - `RelayTV Queue` -> `/smart`
@@ -62,6 +64,12 @@ Use this checklist before cutting a public release or uploading a new Play Conso
      not overwritten when the older HTTP response completes.
    - Switching networks retires the old connection and updates only from the
      active generation.
+   - Background and resume the app, then turn the screen off and use lock-screen
+     controls. Realtime updates and actions must remain attached to the active
+     server without duplicate notifications.
+   - Roam between Wi-Fi networks while playback is active. The previous
+     connection must retire, the current network must reconnect, and retained
+     state must not be replaced by a late callback.
 7. Confirm the Settings screen opens from the toolbar menu and "Manage servers" opens the server picker.
 8. Confirm a server without `RELAYTV_API_TOKEN` still supports WebView controls, shares, uploads, and media controls.
 9. Confirm a protected server accepts a valid per-server API token and rejects a missing or incorrect token.
