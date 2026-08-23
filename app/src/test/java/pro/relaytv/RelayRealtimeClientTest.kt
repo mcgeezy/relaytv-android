@@ -192,4 +192,78 @@ class RelayRealtimeClientTest {
         assertEquals("/realtime/capabilities", server.takeRequest(3, TimeUnit.SECONDS)?.path)
         assertEquals("/ui/events", server.takeRequest(3, TimeUnit.SECONDS)?.path)
     }
+
+    @Test
+    fun legacySsePeriodicallyRediscoversAndUpgradesToWebsocket() {
+        val server = MockWebServer().also {
+            it.start()
+            servers += it
+        }
+        server.enqueue(MockResponse().setResponseCode(404))
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "text/event-stream")
+                .setBody("event: ping\ndata: {}\n\n")
+                .throttleBody(1, 1, TimeUnit.SECONDS)
+        )
+        server.enqueue(
+            MockResponse().setBody(
+                """{
+                    "protocol_version":1,
+                    "websocket":{"enabled":true,"ui":"/ui/ws","subprotocol":"relaytv.realtime.v1"},
+                    "sse":{"enabled":true,"ui":"/ui/events"}
+                }""".trimIndent()
+            )
+        )
+        server.enqueue(
+            MockResponse()
+                .setHeader("Sec-WebSocket-Protocol", RelayRealtimeClient.REALTIME_SUBPROTOCOL)
+                .withWebSocketUpgrade(object : WebSocketListener() {
+                    override fun onOpen(webSocket: WebSocket, response: Response) {
+                        webSocket.send(
+                            """{"version":1,"event":"hello","sequence":0,"data":{"protocol_version":1}}"""
+                        )
+                    }
+                })
+        )
+        val usedLegacySse = CountDownLatch(1)
+        val upgraded = CountDownLatch(1)
+        val client = RelayRealtimeClient(
+            capabilityRefreshMs = 100,
+            listener = object : RelayRealtimeClient.Listener {
+                override fun onTransportChanged(
+                    owner: Long,
+                    identity: String,
+                    transport: RelayRealtimeClient.Transport?,
+                ) {
+                    if (transport == RelayRealtimeClient.Transport.SSE) usedLegacySse.countDown()
+                    if (transport == RelayRealtimeClient.Transport.WEBSOCKET) upgraded.countDown()
+                }
+
+                override fun onEvent(
+                    owner: Long,
+                    identity: String,
+                    event: String,
+                    data: JSONObject,
+                ) = Unit
+
+                override fun onAuthoritativeRefreshRequired(owner: Long, identity: String) = Unit
+            },
+        ).also { clients += it }
+
+        client.start(
+            RelayRealtimeClient.Config(
+                identity = "upgrade",
+                baseUrl = server.url("/").toString().trimEnd('/'),
+                apiToken = "",
+            )
+        )
+
+        assertTrue(usedLegacySse.await(3, TimeUnit.SECONDS))
+        assertTrue(upgraded.await(3, TimeUnit.SECONDS))
+        assertEquals("/realtime/capabilities", server.takeRequest(3, TimeUnit.SECONDS)?.path)
+        assertEquals("/ui/events", server.takeRequest(3, TimeUnit.SECONDS)?.path)
+        assertEquals("/realtime/capabilities", server.takeRequest(3, TimeUnit.SECONDS)?.path)
+        assertEquals("/ui/ws", server.takeRequest(3, TimeUnit.SECONDS)?.path)
+    }
 }

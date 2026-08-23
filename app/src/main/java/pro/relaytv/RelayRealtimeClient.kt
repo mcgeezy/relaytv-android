@@ -22,6 +22,7 @@ import kotlin.random.Random
 class RelayRealtimeClient(
     private val requestClient: OkHttpClient = Net.client,
     private val streamingClient: OkHttpClient = Net.streamingClient,
+    private val capabilityRefreshMs: Long = CAPABILITY_REFRESH_MS,
     private val listener: Listener,
 ) {
     enum class Transport { WEBSOCKET, SSE }
@@ -64,7 +65,7 @@ class RelayRealtimeClient(
     private var webSocket: WebSocket? = null
     private var eventSource: EventSource? = null
     private var retryFuture: ScheduledFuture<*>? = null
-    private var upgradeFuture: ScheduledFuture<*>? = null
+    private var capabilityRefreshFuture: ScheduledFuture<*>? = null
     private var activeTransport: Transport? = null
     private var failureCount = 0
     private var lastSequence = 0L
@@ -248,7 +249,10 @@ class RelayRealtimeClient(
             connectSse(owner, available)
         } else {
             synchronized(this) {
-                if (ownsLocked(owner)) scheduleRetryLocked(owner)
+                if (ownsLocked(owner)) {
+                    capabilities = null
+                    scheduleRetryLocked(owner)
+                }
             }
         }
     }
@@ -268,7 +272,7 @@ class RelayRealtimeClient(
                     failureCount = 0
                     setTransportLocked(owner, Transport.SSE)
                     listener.onAuthoritativeRefreshRequired(owner, currentIdentityLocked())
-                    if (available.websocketEnabled) scheduleUpgradeLocked(owner, eventSource)
+                    scheduleCapabilityRefreshLocked(owner, eventSource)
                 }
             }
 
@@ -310,26 +314,28 @@ class RelayRealtimeClient(
             if (eventSource !== source || !ownsLocked(owner)) return
             eventSource = null
             source.cancel()
-            upgradeFuture?.cancel(false)
-            upgradeFuture = null
+            capabilityRefreshFuture?.cancel(false)
+            capabilityRefreshFuture = null
+            capabilities = null
             setTransportLocked(owner, null)
             scheduleRetryLocked(owner)
         }
     }
 
-    private fun scheduleUpgradeLocked(owner: Long, source: EventSource) {
-        upgradeFuture?.cancel(false)
-        upgradeFuture = scheduler.schedule({
-            val available = synchronized(this) {
+    private fun scheduleCapabilityRefreshLocked(owner: Long, source: EventSource) {
+        capabilityRefreshFuture?.cancel(false)
+        capabilityRefreshFuture = scheduler.schedule({
+            val shouldDiscover = synchronized(this) {
                 if (!ownsLocked(owner) || eventSource !== source) return@schedule
                 eventSource = null
-                upgradeFuture = null
+                capabilityRefreshFuture = null
+                capabilities = null
                 setTransportLocked(owner, null)
-                capabilities
+                true
             }
             source.cancel()
-            if (available != null) connectWebSocket(owner, available)
-        }, TRANSPORT_UPGRADE_MS, TimeUnit.MILLISECONDS)
+            if (shouldDiscover) discover(owner)
+        }, capabilityRefreshMs, TimeUnit.MILLISECONDS)
     }
 
     private fun scheduleRetryLocked(owner: Long) {
@@ -375,8 +381,8 @@ class RelayRealtimeClient(
         eventSource = null
         retryFuture?.cancel(false)
         retryFuture = null
-        upgradeFuture?.cancel(false)
-        upgradeFuture = null
+        capabilityRefreshFuture?.cancel(false)
+        capabilityRefreshFuture = null
         activeTransport = null
     }
 
@@ -414,7 +420,7 @@ class RelayRealtimeClient(
         private const val PROTOCOL_VERSION = 1
         private const val MIN_RETRY_MS = 1_000L
         private const val MAX_RETRY_MS = 30_000L
-        private const val TRANSPORT_UPGRADE_MS = 5 * 60_000L
+        private const val CAPABILITY_REFRESH_MS = 5 * 60_000L
 
         fun resolveHttpUrl(baseUrl: String, path: String): String =
             "${baseUrl.trimEnd('/')}/${path.trimStart('/')}"
