@@ -62,6 +62,12 @@ Use this checklist before cutting a public release or uploading a new Play Conso
      never reuses the outgoing server's metadata.
    - A realtime pause, stop, or seek received while `/status` is in flight is
      not overwritten when the older HTTP response completes.
+   - Silently block an established push connection without changing Android's
+     active network. Media state must fall back within the advertised heartbeat
+     grace instead of leaving the notification attached to a zombie socket.
+   - Advance the queue while a `/status` refresh is in flight, then deliver a
+     compact playback update. The invalidated refresh must retry and publish the
+     new item's full title and artwork.
    - Switching networks retires the old connection and updates only from the
      active generation.
    - Background and resume the app, then turn the screen off and use lock-screen

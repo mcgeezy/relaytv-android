@@ -20,22 +20,39 @@ internal fun realtimeCallbackMatchesActiveHost(
     callbackIdentity == connectionIdentity &&
     callbackIdentity == selectedIdentity
 
-/** Coalesces refresh requests while ensuring a request arriving during a poll is not lost. */
+/** Coalesces refresh requests and carries their obligation across invalidated polls. */
 internal class AuthoritativeRefreshState {
     private var pending = false
+    private var requiredByPoll = false
 
     fun request() {
         pending = true
     }
 
     fun beginPoll() {
+        requiredByPoll = requiredByPoll || pending
         pending = false
+    }
+
+    fun pollCompleted() {
+        requiredByPoll = false
+    }
+
+    fun pollInvalidated() {
+        pending = pending || requiredByPoll
+        requiredByPoll = false
+    }
+
+    fun authoritativeStatusReceived() {
+        pending = false
+        requiredByPoll = false
     }
 
     fun followUpRequired(): Boolean = pending
 
     fun reset() {
         pending = false
+        requiredByPoll = false
     }
 }
 

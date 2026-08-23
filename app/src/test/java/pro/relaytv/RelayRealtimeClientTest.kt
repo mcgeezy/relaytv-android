@@ -20,6 +20,7 @@ import java.io.IOException
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 class RelayRealtimeClientTest {
@@ -336,6 +337,60 @@ class RelayRealtimeClientTest {
         client.start(configFor(server, "synchronous-failure"))
 
         assertTrue(connected.await(3, TimeUnit.SECONDS))
+    }
+
+    @Test
+    fun silentPushTransportsExpireThroughActivityWatchdog() {
+        val server = capabilityServer()
+        val websocketConnected = CountDownLatch(1)
+        val sseConnected = CountDownLatch(1)
+        val sseExpired = CountDownLatch(1)
+        val sawSse = AtomicBoolean()
+        val webSocketFactory = WebSocket.Factory { request, listener ->
+            FakeWebSocket(request).also { socket ->
+                val response = successfulResponse(request).newBuilder()
+                    .header("Sec-WebSocket-Protocol", RelayRealtimeClient.REALTIME_SUBPROTOCOL)
+                    .build()
+                listener.onOpen(socket, response)
+                listener.onMessage(
+                    socket,
+                    """{"version":1,"event":"hello","sequence":0,"data":{"protocol_version":1}}""",
+                )
+            }
+        }
+        val eventSourceFactory = EventSource.Factory { request, listener ->
+            FakeEventSource(request).also { source ->
+                listener.onOpen(source, successfulResponse(request))
+            }
+        }
+        val client = RelayRealtimeClient(
+            webSocketFactory = webSocketFactory,
+            eventSourceFactory = eventSourceFactory,
+            watchdogTimeoutOverrideMs = 50,
+            listener = object : EmptyRealtimeListener() {
+                override fun onTransportChanged(
+                    owner: Long,
+                    identity: String,
+                    transport: RelayRealtimeClient.Transport?,
+                ) {
+                    when (transport) {
+                        RelayRealtimeClient.Transport.WEBSOCKET -> websocketConnected.countDown()
+                        RelayRealtimeClient.Transport.SSE -> {
+                            sawSse.set(true)
+                            sseConnected.countDown()
+                        }
+                        null -> if (sawSse.get()) sseExpired.countDown()
+                    }
+                }
+            },
+        ).also { clients += it }
+
+        client.start(configFor(server, "silent-transports"))
+
+        assertTrue(websocketConnected.await(3, TimeUnit.SECONDS))
+        assertTrue(sseConnected.await(3, TimeUnit.SECONDS))
+        assertTrue(sseExpired.await(3, TimeUnit.SECONDS))
+        assertEquals(12_000L, RelayRealtimeClient.heartbeatTimeoutMs(5.0))
     }
 
     @Test

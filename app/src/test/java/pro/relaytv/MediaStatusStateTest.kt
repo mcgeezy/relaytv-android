@@ -145,9 +145,37 @@ class MediaStatusStateTest {
         assertFalse(state.followUpRequired())
 
         state.request()
+        state.pollCompleted()
         assertTrue(state.followUpRequired())
 
         state.beginPoll()
+        state.pollCompleted()
+        assertFalse(state.followUpRequired())
+    }
+
+    @Test
+    fun invalidatedRequiredPollRestoresRefreshObligation() {
+        val state = AuthoritativeRefreshState()
+        state.request()
+        state.beginPoll()
+
+        state.pollInvalidated()
+
+        assertTrue(state.followUpRequired())
+        state.beginPoll()
+        state.pollCompleted()
+        assertFalse(state.followUpRequired())
+    }
+
+    @Test
+    fun authoritativePushSatisfiesInvalidatedPollObligation() {
+        val state = AuthoritativeRefreshState()
+        state.request()
+        state.beginPoll()
+
+        state.authoritativeStatusReceived()
+        state.pollInvalidated()
+
         assertFalse(state.followUpRequired())
     }
 

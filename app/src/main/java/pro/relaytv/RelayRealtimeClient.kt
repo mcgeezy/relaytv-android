@@ -25,6 +25,7 @@ class RelayRealtimeClient(
     private val webSocketFactory: WebSocket.Factory = streamingClient,
     private val eventSourceFactory: EventSource.Factory = EventSources.createFactory(streamingClient),
     private val capabilityRefreshMs: Long = CAPABILITY_REFRESH_MS,
+    private val watchdogTimeoutOverrideMs: Long? = null,
     private val listener: Listener,
 ) {
     enum class Transport { WEBSOCKET, SSE }
@@ -54,6 +55,7 @@ class RelayRealtimeClient(
         val websocketProtocol: String,
         val sseEnabled: Boolean,
         val ssePath: String,
+        val heartbeatSec: Double,
     )
 
     private val scheduler = Executors.newSingleThreadScheduledExecutor { runnable ->
@@ -69,6 +71,8 @@ class RelayRealtimeClient(
     private var eventSourceAttempt: Any? = null
     private var retryFuture: ScheduledFuture<*>? = null
     private var capabilityRefreshFuture: ScheduledFuture<*>? = null
+    private var activityWatchdogFuture: ScheduledFuture<*>? = null
+    private var activityWatchdogToken: Any? = null
     private var activeTransport: Transport? = null
     private var failureCount = 0
     private var lastSequence = 0L
@@ -198,8 +202,15 @@ class RelayRealtimeClient(
         var receivedHello = false
         val callback = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                if (response.header("Sec-WebSocket-Protocol") != REALTIME_SUBPROTOCOL) {
-                    failWebSocket(owner, attempt, webSocket)
+                synchronized(this@RelayRealtimeClient) {
+                    if (!ownsWebSocketAttemptLocked(owner, attempt)) return
+                    if (response.header("Sec-WebSocket-Protocol") != REALTIME_SUBPROTOCOL) {
+                        failWebSocketLocked(owner, attempt, webSocket)
+                        return
+                    }
+                    armActivityWatchdogLocked(available.heartbeatSec) {
+                        failWebSocketLocked(owner, attempt, webSocket)
+                    }
                 }
             }
 
@@ -211,6 +222,9 @@ class RelayRealtimeClient(
                 }
                 synchronized(this@RelayRealtimeClient) {
                     if (!ownsWebSocketAttemptLocked(owner, attempt)) return
+                    armActivityWatchdogLocked(available.heartbeatSec) {
+                        failWebSocketLocked(owner, attempt, webSocket)
+                    }
                     if (!receivedHello) {
                         if (
                             envelope.event != "hello" ||
@@ -270,6 +284,7 @@ class RelayRealtimeClient(
 
     private fun failWebSocketLocked(owner: Long, attempt: Any, socket: WebSocket?) {
         if (!ownsWebSocketAttemptLocked(owner, attempt)) return
+        cancelActivityWatchdogLocked()
         webSocketAttempt = null
         if (webSocket === socket) webSocket = null
         socket?.cancel()
@@ -318,6 +333,9 @@ class RelayRealtimeClient(
             override fun onOpen(eventSource: EventSource, response: Response) {
                 synchronized(this@RelayRealtimeClient) {
                     if (!ownsEventSourceAttemptLocked(owner, attempt)) return
+                    armActivityWatchdogLocked(available.heartbeatSec) {
+                        failSseLocked(owner, attempt, eventSource)
+                    }
                     failureCount = 0
                     setTransportLocked(owner, Transport.SSE)
                     listener.onAuthoritativeRefreshRequired(owner, currentIdentityLocked())
@@ -335,6 +353,9 @@ class RelayRealtimeClient(
                 if (event.isBlank()) return
                 synchronized(this@RelayRealtimeClient) {
                     if (!ownsEventSourceAttemptLocked(owner, attempt)) return
+                    armActivityWatchdogLocked(available.heartbeatSec) {
+                        failSseLocked(owner, attempt, eventSource)
+                    }
                     listener.onEvent(owner, currentIdentityLocked(), event, payload)
                 }
             }
@@ -370,16 +391,21 @@ class RelayRealtimeClient(
 
     private fun failSse(owner: Long, attempt: Any, source: EventSource?) {
         synchronized(this) {
-            if (!ownsEventSourceAttemptLocked(owner, attempt)) return
-            eventSourceAttempt = null
-            if (eventSource === source) eventSource = null
-            source?.cancel()
-            capabilityRefreshFuture?.cancel(false)
-            capabilityRefreshFuture = null
-            capabilities = null
-            setTransportLocked(owner, null)
-            scheduleRetryLocked(owner)
+            failSseLocked(owner, attempt, source)
         }
+    }
+
+    private fun failSseLocked(owner: Long, attempt: Any, source: EventSource?) {
+        if (!ownsEventSourceAttemptLocked(owner, attempt)) return
+        cancelActivityWatchdogLocked()
+        eventSourceAttempt = null
+        if (eventSource === source) eventSource = null
+        source?.cancel()
+        capabilityRefreshFuture?.cancel(false)
+        capabilityRefreshFuture = null
+        capabilities = null
+        setTransportLocked(owner, null)
+        scheduleRetryLocked(owner)
     }
 
     private fun scheduleCapabilityRefreshLocked(owner: Long, source: EventSource) {
@@ -391,6 +417,7 @@ class RelayRealtimeClient(
                 eventSourceAttempt = null
                 capabilityRefreshFuture = null
                 capabilities = null
+                cancelActivityWatchdogLocked()
                 setTransportLocked(owner, null)
                 true
             }
@@ -413,6 +440,28 @@ class RelayRealtimeClient(
             }
             if (shouldDiscover) discover(owner) else selectBestTransport(owner)
         }, delay, TimeUnit.MILLISECONDS)
+    }
+
+    private fun armActivityWatchdogLocked(heartbeatSec: Double, expireLocked: () -> Unit) {
+        cancelActivityWatchdogLocked()
+        val token = Any()
+        activityWatchdogToken = token
+        val timeoutMs = watchdogTimeoutOverrideMs?.coerceAtLeast(1L)
+            ?: heartbeatTimeoutMs(heartbeatSec)
+        activityWatchdogFuture = scheduler.schedule({
+            synchronized(this) {
+                if (activityWatchdogToken !== token) return@synchronized
+                activityWatchdogFuture = null
+                activityWatchdogToken = null
+                expireLocked()
+            }
+        }, timeoutMs, TimeUnit.MILLISECONDS)
+    }
+
+    private fun cancelActivityWatchdogLocked() {
+        activityWatchdogFuture?.cancel(false)
+        activityWatchdogFuture = null
+        activityWatchdogToken = null
     }
 
     private fun acceptSequenceLocked(owner: Long, event: String, sequence: Long): Boolean {
@@ -464,6 +513,7 @@ class RelayRealtimeClient(
         retryFuture = null
         capabilityRefreshFuture?.cancel(false)
         capabilityRefreshFuture = null
+        cancelActivityWatchdogLocked()
         activeTransport = null
     }
 
@@ -475,6 +525,7 @@ class RelayRealtimeClient(
                 websocketProtocol = REALTIME_SUBPROTOCOL,
                 sseEnabled = true,
                 ssePath = "/ui/events",
+                heartbeatSec = DEFAULT_HEARTBEAT_SEC,
             )
         }
         if (!response.isSuccessful) return null
@@ -493,6 +544,9 @@ class RelayRealtimeClient(
                 ?: REALTIME_SUBPROTOCOL,
             sseEnabled = sse?.optBoolean("enabled", false) == true,
             ssePath = sse?.optString("ui", "/ui/events") ?: "/ui/events",
+            heartbeatSec = payload.optDouble("heartbeat_sec", DEFAULT_HEARTBEAT_SEC)
+                .takeIf { it.isFinite() && it > 0.0 }
+                ?: DEFAULT_HEARTBEAT_SEC,
         )
     }
 
@@ -502,6 +556,13 @@ class RelayRealtimeClient(
         private const val MIN_RETRY_MS = 1_000L
         private const val MAX_RETRY_MS = 30_000L
         private const val CAPABILITY_REFRESH_MS = 5 * 60_000L
+        private const val DEFAULT_HEARTBEAT_SEC = 5.0
+        private const val MAX_HEARTBEAT_SEC = 300.0
+        private const val HEARTBEAT_GRACE_MULTIPLIER = 2.4
+
+        internal fun heartbeatTimeoutMs(heartbeatSec: Double): Long =
+            (heartbeatSec.coerceIn(1.0, MAX_HEARTBEAT_SEC) *
+                HEARTBEAT_GRACE_MULTIPLIER * 1_000.0).toLong()
 
         fun resolveHttpUrl(baseUrl: String, path: String): String =
             "${baseUrl.trimEnd('/')}/${path.trimStart('/')}"
