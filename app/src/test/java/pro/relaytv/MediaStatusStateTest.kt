@@ -328,4 +328,41 @@ class MediaStatusStateTest {
             )
         )
     }
+
+    @Test
+    fun shareExceptionPolicySeparatesRemoteTimeoutsFromUploadTimeoutsAndCapsRetries() {
+        assertEquals(
+            ShareWorker.Companion.ExceptionAction.SUCCESS_PROCESSING,
+            ShareWorker.resolveExceptionAction(
+                isLocalUpload = false,
+                isTimeout = true,
+                runAttemptCount = 0,
+            ),
+        )
+        assertEquals(
+            ShareWorker.Companion.ExceptionAction.RETRY,
+            ShareWorker.resolveExceptionAction(
+                isLocalUpload = true,
+                isTimeout = true,
+                runAttemptCount = 0,
+            ),
+        )
+        assertEquals(
+            ShareWorker.Companion.ExceptionAction.FAILURE,
+            ShareWorker.resolveExceptionAction(
+                isLocalUpload = true,
+                isTimeout = true,
+                runAttemptCount = 3,
+            ),
+        )
+        assertEquals(
+            ShareWorker.Companion.ExceptionAction.FAILURE,
+            ShareWorker.resolveExceptionAction(
+                isLocalUpload = false,
+                isTimeout = false,
+                runAttemptCount = 3,
+            ),
+        )
+        assertTrue(ShareWorker.isTimeoutError(java.net.SocketTimeoutException()))
+    }
 }

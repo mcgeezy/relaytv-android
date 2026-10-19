@@ -28,7 +28,33 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
         const val KEY_UPLOAD_MIME_TYPE = "upload_mime_type"
         const val KEY_UPLOAD_TITLE = "upload_title"
         private const val CHANNEL_ID = "relaytv_silent"
-        private const val NOTIF_ID = 4242
+        private const val MAX_RETRY_ATTEMPTS = 3
+
+        internal enum class ExceptionAction {
+            SUCCESS_PROCESSING,
+            RETRY,
+            FAILURE,
+        }
+
+        internal fun canRetryAttempt(runAttemptCount: Int): Boolean =
+            runAttemptCount < MAX_RETRY_ATTEMPTS
+
+        internal fun isTimeoutError(error: Throwable): Boolean {
+            if (error is java.net.SocketTimeoutException || error is java.io.InterruptedIOException) {
+                return true
+            }
+            return (error.message ?: "").contains("timeout", ignoreCase = true)
+        }
+
+        internal fun resolveExceptionAction(
+            isLocalUpload: Boolean,
+            isTimeout: Boolean,
+            runAttemptCount: Int,
+        ): ExceptionAction = when {
+            !isLocalUpload && isTimeout -> ExceptionAction.SUCCESS_PROCESSING
+            canRetryAttempt(runAttemptCount) -> ExceptionAction.RETRY
+            else -> ExceptionAction.FAILURE
+        }
 
         internal fun extractDetail(body: String): String? {
             if (body.isBlank()) return null
@@ -115,7 +141,7 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
                         localUpload?.delete()
                         Result.success()
                     }
-                    shouldRetry(resp.code) -> Result.retry()
+                    shouldRetry(resp.code) && canRetryAttempt(runAttemptCount) -> Result.retry()
                     else -> {
                         localUpload?.delete()
                         Result.failure()
@@ -124,18 +150,33 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
             }
         } catch (e: ShareFailure) {
             postNotification("Send failed: ${e.message.orEmpty().take(80)}", displayText, tapToOpen = true)
-            if (!e.retryable) {
+            val canRetry = e.retryable && canRetryAttempt(runAttemptCount)
+            if (!canRetry) {
                 localUpload?.delete()
             }
-            if (e.retryable) Result.retry() else Result.failure()
+            if (canRetry) Result.retry() else Result.failure()
         } catch (e: Exception) {
             val reason = (e.message ?: e.javaClass.simpleName).take(80)
-            if (reason.contains("timeout", ignoreCase = true)) {
-                postNotification("Sent (processing)", displayText, tapToOpen = true)
-                Result.success()
-            } else {
-                postNotification("Send failed: $reason", displayText, tapToOpen = true)
-                Result.retry()
+            when (
+                resolveExceptionAction(
+                    isLocalUpload = localUpload != null,
+                    isTimeout = isTimeoutError(e),
+                    runAttemptCount = runAttemptCount,
+                )
+            ) {
+                ExceptionAction.SUCCESS_PROCESSING -> {
+                    postNotification("Sent (processing)", displayText, tapToOpen = true)
+                    Result.success()
+                }
+                ExceptionAction.RETRY -> {
+                    postNotification("Send failed: $reason", displayText, tapToOpen = true)
+                    Result.retry()
+                }
+                ExceptionAction.FAILURE -> {
+                    localUpload?.delete()
+                    postNotification("Send failed: $reason", displayText, tapToOpen = true)
+                    Result.failure()
+                }
             }
         }
     }
@@ -248,6 +289,6 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
             builder.setContentIntent(pending)
         }
 
-        nm.notify(NOTIF_ID, builder.build())
+        nm.notify(id.hashCode(), builder.build())
     }
 }

@@ -182,6 +182,10 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
 
+            override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                syncWebViewApiToken(view, url)
+            }
+
             override fun onPageFinished(view: WebView, url: String) {
                 mainFrameFailed = false
                 syncWebViewApiToken(view, url)
@@ -190,7 +194,11 @@ class MainActivity : AppCompatActivity() {
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 if (request.isForMainFrame) {
                     mainFrameFailed = true
-                    Toast.makeText(this@MainActivity, "Connection lost. Retrying…", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        this@MainActivity,
+                        getString(R.string.connection_lost_retrying),
+                        Toast.LENGTH_SHORT,
+                    ).show()
                     scheduleHeartbeat(1_500)
                 }
             }
@@ -283,21 +291,30 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openPrivacyPolicy() {
-        openExternalUrl(Uri.parse(getString(R.string.privacy_policy_url)))
+        openExternalUrl(
+            Uri.parse(getString(R.string.privacy_policy_url)),
+            R.string.privacy_open_failed,
+        )
     }
 
-    private fun openExternalUrl(uri: Uri) {
+    private fun openExternalUrl(
+        uri: Uri,
+        failureMessageResId: Int = R.string.external_link_open_failed,
+    ) {
         val browserIntent = Intent(Intent.ACTION_VIEW, uri)
         runCatching {
             startActivity(browserIntent)
         }.onFailure {
-            Toast.makeText(this, getString(R.string.privacy_open_failed), Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(failureMessageResId), Toast.LENGTH_SHORT).show()
         }
     }
 
     override fun onResume() {
         super.onResume()
         isInForeground = true
+        if (this::web.isInitialized) {
+            web.onResume()
+        }
         registerNetworkCallback()
         ensureMediaControlService()
         if (!activeBaseUrl.isNullOrBlank()) {
@@ -317,6 +334,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        if (this::web.isInitialized) {
+            web.onPause()
+        }
         super.onPause()
         isInForeground = false
         unregisterNetworkCallback()
@@ -327,6 +347,11 @@ class MainActivity : AppCompatActivity() {
         uiHandler.removeCallbacksAndMessages(null)
         unregisterNetworkCallback()
         mdnsScanner?.stop()
+        pendingWebFileCallback?.onReceiveValue(null)
+        pendingWebFileCallback = null
+        if (this::web.isInitialized) {
+            web.destroy()
+        }
         super.onDestroy()
     }
 
@@ -436,7 +461,11 @@ class MainActivity : AppCompatActivity() {
                     // Keep the media-controls service alive while we can see the server.
                     ensureMediaControlService()
                     if (recovered && !manualRefresh) {
-                        Toast.makeText(this@MainActivity, "Reconnected to RelayTV.", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            this@MainActivity,
+                            getString(R.string.reconnected_to_server),
+                            Toast.LENGTH_SHORT,
+                        ).show()
                     }
 
                     if (loadUiOnSuccess) {
@@ -459,15 +488,15 @@ class MainActivity : AppCompatActivity() {
         consecutiveHealthFailures += 1
 
         if (forcePickerOnFailure && !initialLoadComplete) {
-            Toast.makeText(this, "Server not reachable. Switch servers.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.server_unreachable_switch), Toast.LENGTH_LONG).show()
             showServerPicker(force = true)
             return
         }
 
         if (manualRefresh) {
-            Toast.makeText(this, "Can't reach server right now.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.server_unreachable_now), Toast.LENGTH_SHORT).show()
         } else if (consecutiveHealthFailures == 1) {
-            Toast.makeText(this, "Connection lost. Retrying…", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.connection_lost_retrying), Toast.LENGTH_SHORT).show()
         }
         scheduleHeartbeat(nextRetryDelayMs())
     }

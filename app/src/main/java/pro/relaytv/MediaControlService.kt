@@ -42,6 +42,7 @@ class MediaControlService : MediaSessionService() {
     private var lastActiveAt = SystemClock.elapsedRealtime()
     private var artworkUrl: String? = null
     private var artworkBytes: ByteArray? = null
+    private var artworkCall: Call? = null
 
     private val pollRunnable = Runnable { poll() }
     private val idleStopRunnable = Runnable { stopIfStillIdle() }
@@ -152,6 +153,8 @@ class MediaControlService : MediaSessionService() {
         pollGeneration += 1
         pollCall?.cancel()
         pollCall = null
+        artworkCall?.cancel()
+        artworkCall = null
         realtimeIdentity = null
         realtimeOwner = 0L
         pushHealthy = false
@@ -404,6 +407,8 @@ class MediaControlService : MediaSessionService() {
 
     private fun clearMediaState(serverName: String, refreshIdleDeadline: Boolean = false) {
         mediaState.reset()
+        artworkCall?.cancel()
+        artworkCall = null
         artworkUrl = null
         artworkBytes = null
         if (refreshIdleDeadline) lastActiveAt = SystemClock.elapsedRealtime()
@@ -443,12 +448,20 @@ class MediaControlService : MediaSessionService() {
             else -> "$base/$thumbnail"
         }
         if (absolute == artworkUrl) return
+        artworkCall?.cancel()
+        artworkCall = null
         artworkUrl = absolute
         artworkBytes = null
         if (absolute == null) return
 
-        Net.client.newCall(Net.get(absolute)).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) { /* no artwork */ }
+        val call = Net.client.newCall(Net.get(absolute))
+        artworkCall = call
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                handler.post {
+                    if (artworkCall === call) artworkCall = null
+                }
+            }
 
             override fun onResponse(call: Call, response: Response) {
                 val bytes = response.use { resp ->
@@ -463,12 +476,11 @@ class MediaControlService : MediaSessionService() {
                         }
                     }
                 }
-                if (bytes != null) {
-                    handler.post {
-                        if (artworkUrl == absolute) {
-                            artworkBytes = bytes
-                            mediaState.status?.let { renderStatus(it, serverName(), base) }
-                        }
+                handler.post {
+                    if (artworkCall === call) artworkCall = null
+                    if (bytes != null && artworkUrl == absolute) {
+                        artworkBytes = bytes
+                        mediaState.status?.let { renderStatus(it, serverName(), base) }
                     }
                 }
             }

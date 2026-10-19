@@ -36,6 +36,10 @@ class NsdRelayTvScanner(context: Context) {
         stop()
 
         val found = linkedMapOf<String, DiscoveredRelayTvServer>()
+        val serviceNameToBase = mutableMapOf<String, String>()
+        val pendingResolves = ArrayDeque<NsdServiceInfo>()
+        val retryCounts = mutableMapOf<String, Int>()
+        var resolveInFlight = false
         var finished = false
 
         fun sortedServers(): List<DiscoveredRelayTvServer> =
@@ -53,6 +57,8 @@ class NsdRelayTvScanner(context: Context) {
         fun finish() {
             if (finished) return
             finished = true
+            pendingResolves.clear()
+            resolveInFlight = false
             val snapshot = sortedServers()
             uiHandler.post { callback.onFinished(snapshot) }
         }
@@ -67,12 +73,51 @@ class NsdRelayTvScanner(context: Context) {
             val host = if (ip.contains(":")) "[$ip]" else ip
             val base = HostStore.normalizeBaseUrl("http://$host:${info.port}") ?: return
             val path = attributes?.get("path")?.toUtf8()?.ifBlank { "/ui" } ?: "/ui"
+            val rawServiceName = info.serviceName.trim()
             val name = attributes?.get("name")?.toUtf8()?.takeIf { it.isNotBlank() }
-                ?: info.serviceName.trim().ifBlank { "RelayTV" }
+                ?: rawServiceName.ifBlank { "RelayTV" }
 
+            if (rawServiceName.isNotEmpty()) {
+                serviceNameToBase[rawServiceName] = base
+            }
             val server = DiscoveredRelayTvServer(name = name, baseUrl = base, path = path)
             found[base] = server
             emitUpdate()
+        }
+
+        lateinit var drainResolveQueue: () -> Unit
+        drainResolveQueue = {
+            if (!finished && !resolveInFlight && pendingResolves.isNotEmpty()) {
+                val next = pendingResolves.removeFirst()
+                resolveInFlight = true
+                resolveServiceCompat(next, object : NsdManager.ResolveListener {
+                    override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
+                        uiHandler.post {
+                            resolveInFlight = false
+                            if (finished) return@post
+                            val key = serviceInfo.serviceName.trim()
+                            val attempts = (retryCounts[key] ?: 0) + 1
+                            if (errorCode == NsdManager.FAILURE_ALREADY_ACTIVE && attempts <= 3) {
+                                retryCounts[key] = attempts
+                                pendingResolves.addFirst(serviceInfo)
+                                uiHandler.postDelayed({ drainResolveQueue() }, 50L)
+                            } else {
+                                drainResolveQueue()
+                            }
+                        }
+                    }
+
+                    override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+                        uiHandler.post {
+                            resolveInFlight = false
+                            if (!finished) {
+                                upsertResolved(serviceInfo)
+                                drainResolveQueue()
+                            }
+                        }
+                    }
+                })
+            }
         }
 
         val listener = object : NsdManager.DiscoveryListener {
@@ -96,23 +141,31 @@ class NsdRelayTvScanner(context: Context) {
 
             override fun onServiceFound(serviceInfo: NsdServiceInfo) {
                 if (!serviceInfo.serviceType.equals(SERVICE_TYPE, ignoreCase = true)) return
-
-                resolveServiceCompat(serviceInfo, object : NsdManager.ResolveListener {
-                    override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
-
-                    override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
-                        uiHandler.post { upsertResolved(serviceInfo) }
+                uiHandler.post {
+                    if (finished) return@post
+                    val name = serviceInfo.serviceName.trim()
+                    if (pendingResolves.none { it.serviceName.trim() == name }) {
+                        pendingResolves.addLast(serviceInfo)
+                        drainResolveQueue()
                     }
-                })
+                }
             }
 
             override fun onServiceLost(serviceInfo: NsdServiceInfo) {
-                val ip = nsdHostAddress(serviceInfo)
-                if (ip.isBlank()) return
-                val host = if (ip.contains(":")) "[$ip]" else ip
-                val base = HostStore.normalizeBaseUrl("http://$host:${serviceInfo.port}") ?: return
-                if (found.remove(base) != null) {
-                    emitUpdate()
+                uiHandler.post {
+                    val rawServiceName = serviceInfo.serviceName.trim()
+                    pendingResolves.removeAll { it.serviceName.trim() == rawServiceName }
+                    val mappedBase = serviceNameToBase.remove(rawServiceName)
+                    val fallbackBase = nsdHostAddress(serviceInfo)
+                        .takeIf { it.isNotBlank() && serviceInfo.port > 0 }
+                        ?.let { ip ->
+                            val host = if (ip.contains(":")) "[$ip]" else ip
+                            HostStore.normalizeBaseUrl("http://$host:${serviceInfo.port}")
+                        }
+                    val base = mappedBase ?: fallbackBase ?: return@post
+                    if (found.remove(base) != null) {
+                        emitUpdate()
+                    }
                 }
             }
         }
