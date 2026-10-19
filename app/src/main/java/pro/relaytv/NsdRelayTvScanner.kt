@@ -67,7 +67,8 @@ class NsdRelayTvScanner(context: Context) {
             val host = if (ip.contains(":")) "[$ip]" else ip
             val base = HostStore.normalizeBaseUrl("http://$host:${info.port}") ?: return
             val path = attributes?.get("path")?.toUtf8()?.ifBlank { "/ui" } ?: "/ui"
-            val name = info.serviceName.trim().ifBlank { "RelayTV" }
+            val name = attributes?.get("name")?.toUtf8()?.takeIf { it.isNotBlank() }
+                ?: info.serviceName.trim().ifBlank { "RelayTV" }
 
             val server = DiscoveredRelayTvServer(name = name, baseUrl = base, path = path)
             found[base] = server

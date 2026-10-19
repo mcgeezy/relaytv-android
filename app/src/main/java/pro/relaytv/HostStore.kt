@@ -30,6 +30,18 @@ object HostStore {
         return url.toString().trimEnd('/')
     }
 
+    fun isSameServerUrl(baseUrl: String?, candidateUrl: String?): Boolean {
+        val base = normalizeBaseUrl(baseUrl.orEmpty())?.toHttpUrlOrNull() ?: return false
+        val target = candidateUrl?.trim()?.toHttpUrlOrNull() ?: return false
+        if (base.scheme != target.scheme || base.host != target.host || base.port != target.port) {
+            return false
+        }
+        val basePath = base.encodedPath.trimEnd('/')
+        if (basePath.isEmpty()) return true
+        val targetPath = target.encodedPath.trimEnd('/')
+        return targetPath == basePath || targetPath.startsWith("$basePath/")
+    }
+
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
     @Suppress("UNUSED_PARAMETER")

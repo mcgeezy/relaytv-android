@@ -172,6 +172,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
         web.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                if (!request.isForMainFrame) return false
+                val targetUri = request.url ?: return false
+                if (HostStore.isSameServerUrl(activeBaseUrl, targetUri.toString())) {
+                    return false
+                }
+                openExternalUrl(targetUri)
+                return true
+            }
+
             override fun onPageFinished(view: WebView, url: String) {
                 mainFrameFailed = false
                 syncWebViewApiToken(view, url)
@@ -273,7 +283,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openPrivacyPolicy() {
-        val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.privacy_policy_url)))
+        openExternalUrl(Uri.parse(getString(R.string.privacy_policy_url)))
+    }
+
+    private fun openExternalUrl(uri: Uri) {
+        val browserIntent = Intent(Intent.ACTION_VIEW, uri)
         runCatching {
             startActivity(browserIntent)
         }.onFailure {
@@ -333,15 +347,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun syncWebViewApiToken(view: WebView, pageUrl: String) {
         val base = activeBaseUrl ?: return
-        if (pageUrl != base && !pageUrl.startsWith("$base/")) return
+        if (!HostStore.isSameServerUrl(base, pageUrl)) return
         val apiToken = HostStore.getApiTokenForBase(this, base)
-        if (apiToken.isBlank()) return
-
-        val quotedToken = JSONObject.quote(apiToken)
-        view.evaluateJavascript(
-            "window.localStorage.setItem('relaytv_api_token', $quotedToken);",
-            null,
-        )
+        val script = if (apiToken.isBlank()) {
+            "window.localStorage.removeItem('relaytv_api_token');"
+        } else {
+            val quotedToken = JSONObject.quote(apiToken)
+            "window.localStorage.setItem('relaytv_api_token', $quotedToken);"
+        }
+        view.evaluateJavascript(script, null)
     }
 
     private fun checkApiToken(
