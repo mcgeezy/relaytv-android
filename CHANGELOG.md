@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/mcgeezy/relaytv-android/compare/v1.4.0...v1.5.0) (2026-10-19)
+
+
+### Features
+
+* support Plex auth links, playlist share jobs, and live DVR controls ([#11](https://github.com/mcgeezy/relaytv-android/issues/11)) ([b084069](https://github.com/mcgeezy/relaytv-android/commit/b0840692c97a079348c22eadf863959875a6acce))
+
 ## [1.4.0](https://github.com/mcgeezy/relaytv-android/compare/v1.3.2...v1.4.0) (2026-08-23)
 
 
