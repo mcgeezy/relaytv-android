@@ -28,7 +28,72 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
         const val KEY_UPLOAD_MIME_TYPE = "upload_mime_type"
         const val KEY_UPLOAD_TITLE = "upload_title"
         private const val CHANNEL_ID = "relaytv_silent"
-        private const val NOTIF_ID = 4242
+        private const val MAX_RETRY_ATTEMPTS = 3
+
+        internal enum class ExceptionAction {
+            SUCCESS_PROCESSING,
+            RETRY,
+            FAILURE,
+        }
+
+        internal fun canRetryAttempt(runAttemptCount: Int): Boolean =
+            runAttemptCount < MAX_RETRY_ATTEMPTS
+
+        internal fun isTimeoutError(error: Throwable): Boolean {
+            if (error is java.net.SocketTimeoutException || error is java.io.InterruptedIOException) {
+                return true
+            }
+            return (error.message ?: "").contains("timeout", ignoreCase = true)
+        }
+
+        internal fun resolveExceptionAction(
+            isLocalUpload: Boolean,
+            isTimeout: Boolean,
+            runAttemptCount: Int,
+        ): ExceptionAction = when {
+            !isLocalUpload && isTimeout -> ExceptionAction.SUCCESS_PROCESSING
+            canRetryAttempt(runAttemptCount) -> ExceptionAction.RETRY
+            else -> ExceptionAction.FAILURE
+        }
+
+        internal fun extractDetail(body: String): String? {
+            if (body.isBlank()) return null
+            return runCatching {
+                val json = JSONObject(body)
+                json.optString("detail").takeIf { it.isNotBlank() }
+                    ?: json.optString("error").takeIf { it.isNotBlank() }
+            }.getOrNull()
+        }
+
+        internal fun parseShareResponseMessage(code: Int, ok: Boolean, body: String): String {
+            if (code == 401) return "API token required"
+            if (!ok) {
+                val detail = extractDetail(body)
+                return if (!detail.isNullOrBlank()) "Send failed: ${detail.take(80)}" else "Error"
+            }
+            return runCatching {
+                val j = JSONObject(body)
+                val status = j.optString("status").trim()
+                val action = j.optString("action").trim()
+                val effectiveAction = j.optString("effective_action").trim()
+                val detail = j.optString("detail").trim()
+                when {
+                    status == "playing" || action == "played" -> "Playing now"
+                    status == "queued" -> "Enqueued"
+                    status == "loading" || status == "adding" -> {
+                        detail.ifBlank {
+                            if (effectiveAction == "play_now") "Importing playlist to play…" else "Importing playlist…"
+                        }
+                    }
+                    status == "completed" -> {
+                        detail.ifBlank {
+                            if (effectiveAction == "play_now") "Playing now" else "Enqueued"
+                        }
+                    }
+                    else -> "Sent"
+                }
+            }.getOrDefault("Sent")
+        }
     }
 
     override fun doWork(): Result {
@@ -59,21 +124,16 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
 
             val url = inputData.getString(KEY_URL) ?: return Result.failure()
 
-            val payload = JSONObject().put("url", url).toString()
+            val payload = JSONObject()
+                .put("url", url)
+                .put("request_id", id.toString())
+                .toString()
             val req = Net.postJson(base + endpointPath, payload, apiToken)
 
             Net.client.newCall(req).execute().use { resp ->
                 val body = resp.body?.string().orEmpty()
                 val ok = resp.isSuccessful
-                val msg = runCatching {
-                    val j = JSONObject(body)
-                    when {
-                        resp.code == 401 -> "API token required"
-                        j.optString("status") == "playing" -> "Playing now"
-                        j.optString("status") == "queued" -> "Enqueued"
-                        else -> if (ok) "Sent" else "Error"
-                    }
-                }.getOrDefault(if (ok) "Sent" else "Error")
+                val msg = parseShareResponseMessage(resp.code, ok, body)
 
                 postNotification(msg, displayText, tapToOpen = true)
                 when {
@@ -81,7 +141,7 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
                         localUpload?.delete()
                         Result.success()
                     }
-                    shouldRetry(resp.code) -> Result.retry()
+                    shouldRetry(resp.code) && canRetryAttempt(runAttemptCount) -> Result.retry()
                     else -> {
                         localUpload?.delete()
                         Result.failure()
@@ -90,18 +150,33 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
             }
         } catch (e: ShareFailure) {
             postNotification("Send failed: ${e.message.orEmpty().take(80)}", displayText, tapToOpen = true)
-            if (!e.retryable) {
+            val canRetry = e.retryable && canRetryAttempt(runAttemptCount)
+            if (!canRetry) {
                 localUpload?.delete()
             }
-            if (e.retryable) Result.retry() else Result.failure()
+            if (canRetry) Result.retry() else Result.failure()
         } catch (e: Exception) {
             val reason = (e.message ?: e.javaClass.simpleName).take(80)
-            if (reason.contains("timeout", ignoreCase = true)) {
-                postNotification("Sent (processing)", displayText, tapToOpen = true)
-                Result.success()
-            } else {
-                postNotification("Send failed: $reason", displayText, tapToOpen = true)
-                Result.retry()
+            when (
+                resolveExceptionAction(
+                    isLocalUpload = localUpload != null,
+                    isTimeout = isTimeoutError(e),
+                    runAttemptCount = runAttemptCount,
+                )
+            ) {
+                ExceptionAction.SUCCESS_PROCESSING -> {
+                    postNotification("Sent (processing)", displayText, tapToOpen = true)
+                    Result.success()
+                }
+                ExceptionAction.RETRY -> {
+                    postNotification("Send failed: $reason", displayText, tapToOpen = true)
+                    Result.retry()
+                }
+                ExceptionAction.FAILURE -> {
+                    localUpload?.delete()
+                    postNotification("Send failed: $reason", displayText, tapToOpen = true)
+                    Result.failure()
+                }
             }
         }
     }
@@ -183,15 +258,6 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
         }
     }
 
-    private fun extractDetail(body: String): String? {
-        if (body.isBlank()) return null
-        return runCatching {
-            val json = JSONObject(body)
-            json.optString("detail").takeIf { it.isNotBlank() }
-                ?: json.optString("error").takeIf { it.isNotBlank() }
-        }.getOrNull()
-    }
-
     private fun shouldRetry(code: Int): Boolean {
         return code == 408 || code == 429 || code >= 500
     }
@@ -223,6 +289,6 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
             builder.setContentIntent(pending)
         }
 
-        nm.notify(NOTIF_ID, builder.build())
+        nm.notify(id.hashCode(), builder.build())
     }
 }

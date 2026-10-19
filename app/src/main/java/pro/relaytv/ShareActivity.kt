@@ -53,6 +53,8 @@ class ShareActivity : AppCompatActivity() {
         val errorMessageResId: Int? = null,
     )
 
+    private var stagingInProgress = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -71,6 +73,8 @@ class ShareActivity : AppCompatActivity() {
         val successTemplate = resolveMetaString(META_SUCCESS_TEMPLATE).ifBlank { "Sent to \"%s\"" }
         val streamUri = extractStreamUri()
         if (streamUri != null) {
+            if (stagingInProgress) return
+            stagingInProgress = true
             Thread {
                 val result = stageLocalMedia(streamUri)
                 runOnUiThread {
@@ -156,7 +160,13 @@ class ShareActivity : AppCompatActivity() {
     private fun extractStreamUri(): Uri? {
         @Suppress("DEPRECATION")
         val extra = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
-        return extra
+        if (extra != null) return extra
+        if (!intent.getStringExtra(Intent.EXTRA_TEXT).isNullOrBlank()) return null
+        val clip = intent.clipData
+        if (clip != null && clip.itemCount > 0) {
+            return clip.getItemAt(0)?.uri
+        }
+        return null
     }
 
     private fun stageLocalMedia(uri: Uri): LocalMediaStageResult {

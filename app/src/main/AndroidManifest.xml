@@ -22,6 +22,7 @@
 
         <activity
             android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -31,6 +32,7 @@
 
         <activity
             android:name=".ShareActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="false"
             android:excludeFromRecents="true"
             android:finishOnTaskLaunch="true"
@@ -41,6 +43,7 @@
         <activity-alias
             android:name=".ShareQueueAlias"
             android:targetActivity=".ShareActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="true"
             android:enabled="true"
             android:excludeFromRecents="true"
@@ -67,6 +70,7 @@
         <activity-alias
             android:name=".SharePlayNowAlias"
             android:targetActivity=".ShareActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="true"
             android:enabled="true"
             android:excludeFromRecents="true"

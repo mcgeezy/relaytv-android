@@ -62,7 +62,7 @@ class RelayRemotePlayer(
         if (status.playing && !status.paused) {
             pos += SystemClock.elapsedRealtime() - anchorElapsedRealtime
         }
-        val durationMs = status.durationSec?.let { (it * 1000).toLong() }
+        val durationMs = status.effectiveDurationSec?.let { (it * 1000).toLong() }
         if (durationMs != null && durationMs > 0) {
             pos = pos.coerceAtMost(durationMs)
         }
@@ -78,11 +78,10 @@ class RelayRemotePlayer(
                 .build()
         }
 
-        val durationUs = s.durationSec
-            ?.takeIf { it > 0 }
+        val durationUs = s.effectiveDurationSec
             ?.let { (it * C.MICROS_PER_SECOND).toLong() }
             ?: C.TIME_UNSET
-        val seekable = durationUs != C.TIME_UNSET
+        val seekable = s.isSeekable && durationUs != C.TIME_UNSET
 
         val metadata = MediaMetadata.Builder()
             .setTitle(s.title ?: "Playing on $serverName")
@@ -173,9 +172,10 @@ class RelayRemotePlayer(
             mediaItemIndex > 1 -> listener.onNext()
             mediaItemIndex < 1 -> listener.onPrevious()
             else -> {
-                val target = if (positionMs == C.TIME_UNSET) 0L else positionMs.coerceAtLeast(0)
-                setPositionAnchor(target.toDouble())
-                listener.onSeekTo(target / 1000.0)
+                val rawTargetMs = if (positionMs == C.TIME_UNSET) 0L else positionMs.coerceAtLeast(0)
+                val targetSec = status.clampSeekSec(rawTargetMs / 1000.0)
+                setPositionAnchor(targetSec * 1000.0)
+                listener.onSeekTo(targetSec)
             }
         }
         return Futures.immediateVoidFuture()
