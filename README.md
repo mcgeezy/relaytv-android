@@ -259,8 +259,8 @@ physical-device connectivity and fallback verification, before publishing.
 
 ## Project and support
 
-RelayTV Android follows the RelayTV core project's
-[GNU General Public License v3.0](https://github.com/mcgeezy/relaytv/blob/main/LICENSE).
+RelayTV Android is open-source software licensed under the
+[GNU General Public License v3.0](LICENSE).
 RelayTV artwork and marks are covered by the core project's
 [asset and trademark policy](https://github.com/mcgeezy/relaytv/blob/main/ASSETS.md).
 

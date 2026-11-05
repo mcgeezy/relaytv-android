@@ -1,0 +1,8 @@
+RelayTV turns your Android phone into a companion remote and share target for a self-hosted RelayTV server connected to your television.
+
+Features:
+- Two Android Share targets (Play and Queue) for web video links, playlists, and local audio/video files
+- Full RelayTV web remote for browsing Plex, Jellyfin, Emby, Seerr requests, and live IPTV channels
+- Automatic LAN discovery via mDNS (_relaytv._tcp) and multi-server profile management
+- Native Android lock-screen and notification media session controls via WebSocket/SSE
+- Local-first with optional bearer-token authentication, zero cloud accounts, and no telemetry
