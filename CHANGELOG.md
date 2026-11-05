@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/mcgeezy/relaytv-android/compare/v1.5.0...v1.5.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* omit proprietary APK dependency block and add GPL-3.0 license and Fastlane metadata ([#13](https://github.com/mcgeezy/relaytv-android/issues/13)) ([fbf000f](https://github.com/mcgeezy/relaytv-android/commit/fbf000f83eaa8fdf88d303836c24e279e3f1ba06))
+
 ## [1.5.0](https://github.com/mcgeezy/relaytv-android/compare/v1.4.0...v1.5.0) (2026-10-19)
 
 
