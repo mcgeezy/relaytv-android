@@ -461,9 +461,9 @@ class MainActivity : AppCompatActivity() {
                     }
                     val recovered = consecutiveHealthFailures > 0
                     consecutiveHealthFailures = 0
-                    // Start or wake the media-controls service on initial load, manual refresh,
-                    // or server recovery without resetting its idle stop timer on routine heartbeats.
-                    if (!fromHeartbeat || recovered || !initialLoadComplete) {
+                    // Keep observing playback while the UI is visible: playback started in
+                    // the WebView does not otherwise wake a service that stopped while idle.
+                    if (isInForeground) {
                         ensureMediaControlService()
                     }
                     if (recovered && !manualRefresh) {

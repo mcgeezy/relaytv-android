@@ -42,11 +42,10 @@ object HostStore {
         return targetPath == basePath || targetPath.startsWith("$basePath/")
     }
 
-    @Volatile
-    private var cachedRawHosts: String? = null
+    private data class HostsCache(val raw: String?, val hosts: List<RelayHost>)
 
     @Volatile
-    private var cachedHosts: List<RelayHost> = emptyList()
+    private var hostsCache = HostsCache(null, emptyList())
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
@@ -81,16 +80,15 @@ object HostStore {
         ensureMigrated(ctx)
         val raw = prefs(ctx).getString(KEY_HOSTS, null)
         if (raw.isNullOrBlank()) {
-            cachedRawHosts = null
-            cachedHosts = emptyList()
+            hostsCache = HostsCache(null, emptyList())
             return emptyList()
         }
-        if (raw == cachedRawHosts) {
-            return cachedHosts
+        val cached = hostsCache
+        if (raw == cached.raw) {
+            return cached.hosts
         }
         val parsed = parseHostsJson(raw)
-        cachedRawHosts = raw
-        cachedHosts = parsed
+        hostsCache = HostsCache(raw, parsed)
         return parsed
     }
 
@@ -106,8 +104,7 @@ object HostStore {
             )
         }
         val serialized = arr.toString()
-        cachedRawHosts = serialized
-        cachedHosts = parseHostsJson(serialized)
+        hostsCache = HostsCache(serialized, parseHostsJson(serialized))
         prefs(ctx).edit().putString(KEY_HOSTS, serialized).apply()
     }
 

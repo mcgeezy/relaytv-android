@@ -41,6 +41,13 @@ class MediaControlService : MediaSessionService() {
 
     private var lastActiveAt = SystemClock.elapsedRealtime()
     private var consecutivePollFailures = 0
+    private var disconnectedAtMs: Long? = null
+    private val disconnectedStateExpiry = Runnable {
+        if (disconnectedAtMs != null) {
+            clearMediaState(serverName())
+            renderStatus(RemoteStatus.IDLE, serverName(), base = null)
+        }
+    }
     private var artworkUrl: String? = null
     private var artworkBytes: ByteArray? = null
     private var artworkCall: Call? = null
@@ -52,6 +59,8 @@ class MediaControlService : MediaSessionService() {
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             handler.post {
+                disconnectedAtMs = null
+                handler.removeCallbacks(disconnectedStateExpiry)
                 consecutivePollFailures = 0
                 pushHealthy = false
                 if (realtimeIdentity == null) {
@@ -65,9 +74,17 @@ class MediaControlService : MediaSessionService() {
 
         override fun onLost(network: Network) {
             handler.post {
-                if (connectivityManager.activeNetwork == null) {
+                if (connectivityManager.activeNetwork == null && disconnectedAtMs == null) {
+                    disconnectedAtMs = SystemClock.elapsedRealtime()
                     handler.removeCallbacks(pollRunnable)
                     retireRealtime()
+                    // Retain controls briefly across handovers, then clear stale playback.
+                    // No further poll failures will arrive to drive expiry while offline.
+                    artworkCall?.cancel()
+                    artworkCall = null
+                    handler.postDelayed(disconnectedStateExpiry, STALE_STATUS_GRACE_MS)
+                    handler.removeCallbacks(idleStopRunnable)
+                    handler.postDelayed(idleStopRunnable, UNREACHABLE_STOP_MS)
                 }
             }
         }
@@ -192,10 +209,11 @@ class MediaControlService : MediaSessionService() {
 
     private fun schedulePoll(delayMs: Long) {
         handler.removeCallbacks(pollRunnable)
-        handler.postDelayed(pollRunnable, delayMs)
+        if (disconnectedAtMs == null) handler.postDelayed(pollRunnable, delayMs)
     }
 
     private fun poll() {
+        if (disconnectedAtMs != null) return
         if (!AppSettings.isMediaControlsEnabled(this)) {
             realtimeClient?.stop()
             stopSelf()
@@ -283,6 +301,7 @@ class MediaControlService : MediaSessionService() {
                 idleStopMs = IDLE_STOP_MS,
                 consecutivePollFailures = consecutivePollFailures,
                 unreachableStopMs = UNREACHABLE_STOP_MS,
+                disconnectedAtMs = disconnectedAtMs,
             ) ?: 0L
             if (remaining <= 0L) {
                 player.updateStatus(RemoteStatus.IDLE, serverName, null)
@@ -363,6 +382,7 @@ class MediaControlService : MediaSessionService() {
     }
 
     private fun synchronizeActiveHost() {
+        if (disconnectedAtMs != null) return
         val host = HostStore.getActiveHost(this)
         val base = host?.let { HostStore.normalizeBaseUrl(it.baseUrl) }
         if (host == null || base.isNullOrBlank()) {
@@ -458,6 +478,7 @@ class MediaControlService : MediaSessionService() {
             idleStopMs = IDLE_STOP_MS,
             consecutivePollFailures = consecutivePollFailures,
             unreachableStopMs = UNREACHABLE_STOP_MS,
+            disconnectedAtMs = disconnectedAtMs,
         ) ?: return
         if (remaining <= 0L) {
             player?.updateStatus(RemoteStatus.IDLE, serverName(), null)

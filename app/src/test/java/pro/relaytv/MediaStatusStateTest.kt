@@ -475,6 +475,47 @@ class MediaStatusStateTest {
     }
 
     @Test
+    fun disconnectedPlaybackExpiresEvenWhenActiveOrNudgedByForeground() {
+        val playing = RemoteStatus(playing = true)
+        // Disconnect at 10s. A foreground start at 80s must not extend the 100s deadline.
+        assertEquals(
+            20_000L,
+            remainingIdleStopDelayMs(
+                status = playing,
+                nowElapsedMs = 80_000L,
+                lastActiveElapsedMs = 80_000L,
+                idleStopMs = 300_000L,
+                unreachableStopMs = 90_000L,
+                disconnectedAtMs = 10_000L,
+            ),
+        )
+        for (status in listOf(playing, RemoteStatus.IDLE, null)) {
+            assertEquals(
+                0L,
+                remainingIdleStopDelayMs(
+                    status = status,
+                    nowElapsedMs = 100_000L,
+                    lastActiveElapsedMs = 99_000L,
+                    idleStopMs = 300_000L,
+                    unreachableStopMs = 90_000L,
+                    disconnectedAtMs = 10_000L,
+                ),
+            )
+        }
+        // Reconnecting removes the offline deadline and restores normal playback lifetime.
+        assertNull(
+            remainingIdleStopDelayMs(
+                status = playing,
+                nowElapsedMs = 100_000L,
+                lastActiveElapsedMs = 99_000L,
+                idleStopMs = 300_000L,
+                unreachableStopMs = 90_000L,
+                disconnectedAtMs = null,
+            ),
+        )
+    }
+
+    @Test
     fun hostStoreParsesAndNormalizesSavedHostsJson() {
         val parsed = HostStore.parseHostsJson(
             """[

@@ -77,7 +77,7 @@ internal fun pollDelayForStatusMs(
 
 /**
  * Returns the remaining milliseconds before an idle or unreachable [MediaControlService]
- * should stop itself, or `null` if playback is currently active.
+ * should stop itself, or `null` if playback is active and the network is available.
  */
 internal fun remainingIdleStopDelayMs(
     status: RemoteStatus?,
@@ -86,7 +86,13 @@ internal fun remainingIdleStopDelayMs(
     idleStopMs: Long,
     consecutivePollFailures: Int = 0,
     unreachableStopMs: Long = idleStopMs,
+    disconnectedAtMs: Long? = null,
 ): Long? {
+    // Offline expiry must not depend on a stale playing state or foreground nudges.
+    if (disconnectedAtMs != null) {
+        return (unreachableStopMs - (nowElapsedMs - disconnectedAtMs).coerceAtLeast(0L))
+            .coerceAtLeast(0L)
+    }
     if (status?.active == true) return null
     val thresholdMs = if (consecutivePollFailures >= 3) {
         minOf(idleStopMs, unreachableStopMs)
