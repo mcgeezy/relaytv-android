@@ -42,6 +42,12 @@ object HostStore {
         return targetPath == basePath || targetPath.startsWith("$basePath/")
     }
 
+    @Volatile
+    private var cachedRawHosts: String? = null
+
+    @Volatile
+    private var cachedHosts: List<RelayHost> = emptyList()
+
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
     @Suppress("UNUSED_PARAMETER")
@@ -49,9 +55,8 @@ object HostStore {
         // no-op
     }
 
-    fun loadHosts(ctx: Context): List<RelayHost> {
-        ensureMigrated(ctx)
-        val raw = prefs(ctx).getString(KEY_HOSTS, null) ?: return emptyList()
+    internal fun parseHostsJson(raw: String?): List<RelayHost> {
+        if (raw.isNullOrBlank()) return emptyList()
         return try {
             val arr = JSONArray(raw)
             buildList {
@@ -72,6 +77,23 @@ object HostStore {
         }
     }
 
+    fun loadHosts(ctx: Context): List<RelayHost> {
+        ensureMigrated(ctx)
+        val raw = prefs(ctx).getString(KEY_HOSTS, null)
+        if (raw.isNullOrBlank()) {
+            cachedRawHosts = null
+            cachedHosts = emptyList()
+            return emptyList()
+        }
+        if (raw == cachedRawHosts) {
+            return cachedHosts
+        }
+        val parsed = parseHostsJson(raw)
+        cachedRawHosts = raw
+        cachedHosts = parsed
+        return parsed
+    }
+
     fun saveHosts(ctx: Context, hosts: List<RelayHost>) {
         val arr = JSONArray()
         hosts.forEach {
@@ -83,7 +105,10 @@ object HostStore {
                     .put("apiToken", it.apiToken.trim())
             )
         }
-        prefs(ctx).edit().putString(KEY_HOSTS, arr.toString()).apply()
+        val serialized = arr.toString()
+        cachedRawHosts = serialized
+        cachedHosts = parseHostsJson(serialized)
+        prefs(ctx).edit().putString(KEY_HOSTS, serialized).apply()
     }
 
     fun getActiveHostId(ctx: Context): String? {

@@ -40,6 +40,7 @@ class MediaControlService : MediaSessionService() {
     private val authoritativeRefreshState = AuthoritativeRefreshState()
 
     private var lastActiveAt = SystemClock.elapsedRealtime()
+    private var consecutivePollFailures = 0
     private var artworkUrl: String? = null
     private var artworkBytes: ByteArray? = null
     private var artworkCall: Call? = null
@@ -51,9 +52,23 @@ class MediaControlService : MediaSessionService() {
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             handler.post {
+                consecutivePollFailures = 0
                 pushHealthy = false
-                realtimeClient?.restart()?.let { realtimeOwner = it }
-                schedulePoll(0)
+                if (realtimeIdentity == null) {
+                    synchronizeActiveHost()
+                } else {
+                    realtimeClient?.restart()?.let { realtimeOwner = it }
+                    schedulePoll(0)
+                }
+            }
+        }
+
+        override fun onLost(network: Network) {
+            handler.post {
+                if (connectivityManager.activeNetwork == null) {
+                    handler.removeCallbacks(pollRunnable)
+                    retireRealtime()
+                }
             }
         }
     }
@@ -62,8 +77,10 @@ class MediaControlService : MediaSessionService() {
         private const val POLL_PLAYING_MS = 3_000L
         private const val POLL_PAUSED_MS = 5_000L
         private const val POLL_IDLE_MS = 10_000L
+        private const val POLL_MAX_BACKOFF_MS = 60_000L
         private const val POLL_AFTER_COMMAND_MS = 700L
         private const val IDLE_STOP_MS = 5 * 60_000L
+        private const val UNREACHABLE_STOP_MS = 90_000L
         private const val STALE_STATUS_GRACE_MS = 30_000L
         private const val MAX_ARTWORK_BYTES = 3L * 1024 * 1024
     }
@@ -115,6 +132,7 @@ class MediaControlService : MediaSessionService() {
             }
 
             override fun onEvent(owner: Long, identity: String, event: String, data: JSONObject) {
+                if (event == "hello" || event == "ping") return
                 handler.post {
                     if (!acceptRealtimeCallback(owner, identity)) return@post
                     applyRealtimeEvent(event, data)
@@ -230,6 +248,7 @@ class MediaControlService : MediaSessionService() {
                     if (status == null) {
                         handlePollFailure(host.name.ifBlank { "RelayTV" }, base)
                     } else {
+                        consecutivePollFailures = 0
                         if (
                             mediaState.acceptPoll(
                                 stateOwner,
@@ -252,12 +271,20 @@ class MediaControlService : MediaSessionService() {
     private fun renderStatus(status: RemoteStatus, serverName: String, base: String?) {
         val player = player ?: return
 
+        val now = SystemClock.elapsedRealtime()
         if (status.active) {
-            lastActiveAt = SystemClock.elapsedRealtime()
+            lastActiveAt = now
             handler.removeCallbacks(idleStopRunnable)
         } else {
-            val remaining = IDLE_STOP_MS - (SystemClock.elapsedRealtime() - lastActiveAt)
-            if (remaining <= 0) {
+            val remaining = remainingIdleStopDelayMs(
+                status = status,
+                nowElapsedMs = now,
+                lastActiveElapsedMs = lastActiveAt,
+                idleStopMs = IDLE_STOP_MS,
+                consecutivePollFailures = consecutivePollFailures,
+                unreachableStopMs = UNREACHABLE_STOP_MS,
+            ) ?: 0L
+            if (remaining <= 0L) {
                 player.updateStatus(RemoteStatus.IDLE, serverName, null)
                 stopSelf()
                 return
@@ -270,11 +297,14 @@ class MediaControlService : MediaSessionService() {
         player.updateStatus(status, serverName, artworkBytes)
 
         if (!pushHealthy) {
-            val delay = when {
-                status.playing && !status.paused -> POLL_PLAYING_MS
-                status.active -> POLL_PAUSED_MS
-                else -> POLL_IDLE_MS
-            }
+            val delay = pollDelayForStatusMs(
+                status = status,
+                consecutiveFailures = consecutivePollFailures,
+                playingDelayMs = POLL_PLAYING_MS,
+                pausedDelayMs = POLL_PAUSED_MS,
+                idleDelayMs = POLL_IDLE_MS,
+                maxBackoffDelayMs = POLL_MAX_BACKOFF_MS,
+            )
             schedulePoll(delay)
         }
     }
@@ -287,6 +317,7 @@ class MediaControlService : MediaSessionService() {
             val remaining = mediaState.remainingRetentionMs(now, STALE_STATUS_GRACE_MS) ?: 0L
             schedulePoll(retainedStatusRecheckDelayMs(remaining, POLL_PLAYING_MS))
         } else {
+            consecutivePollFailures += 1
             mediaState.reset()
             renderStatus(RemoteStatus.IDLE, serverName, base)
         }
@@ -309,6 +340,7 @@ class MediaControlService : MediaSessionService() {
         val name = host.name.ifBlank { "RelayTV" }
         when (event) {
             "status" -> {
+                consecutivePollFailures = 0
                 authoritativeRefreshState.authoritativeStatusReceived()
                 val status = mediaState.acceptRealtime(
                     RemoteStatus.parse(data),
@@ -317,6 +349,7 @@ class MediaControlService : MediaSessionService() {
                 renderStatus(status, name, base)
             }
             "playback" -> {
+                consecutivePollFailures = 0
                 val status = mediaState.mergeRealtimePlayback(data, SystemClock.elapsedRealtime())
                 if (status == null) {
                     requestAuthoritativeRefresh(0)
@@ -380,6 +413,7 @@ class MediaControlService : MediaSessionService() {
         pollGeneration += 1
         pollCall?.cancel()
         pollCall = null
+        consecutivePollFailures = 0
         authoritativeRefreshState.reset()
         clearMediaState(host.name.ifBlank { "RelayTV" }, refreshIdleDeadline = true)
         realtimeIdentity = identity
@@ -417,10 +451,20 @@ class MediaControlService : MediaSessionService() {
     }
 
     private fun stopIfStillIdle() {
-        val current = mediaState.status ?: return
-        if (!current.active && SystemClock.elapsedRealtime() - lastActiveAt >= IDLE_STOP_MS) {
+        val remaining = remainingIdleStopDelayMs(
+            status = mediaState.status,
+            nowElapsedMs = SystemClock.elapsedRealtime(),
+            lastActiveElapsedMs = lastActiveAt,
+            idleStopMs = IDLE_STOP_MS,
+            consecutivePollFailures = consecutivePollFailures,
+            unreachableStopMs = UNREACHABLE_STOP_MS,
+        ) ?: return
+        if (remaining <= 0L) {
             player?.updateStatus(RemoteStatus.IDLE, serverName(), null)
             stopSelf()
+        } else {
+            handler.removeCallbacks(idleStopRunnable)
+            handler.postDelayed(idleStopRunnable, remaining)
         }
     }
 

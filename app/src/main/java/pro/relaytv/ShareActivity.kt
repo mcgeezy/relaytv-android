@@ -10,7 +10,9 @@ import android.provider.OpenableColumns
 import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.work.Constraints
 import androidx.work.Data
+import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import java.io.File
@@ -127,7 +129,12 @@ class ShareActivity : AppCompatActivity() {
             }
         }
 
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+
         val req = OneTimeWorkRequestBuilder<ShareWorker>()
+            .setConstraints(constraints)
             .setInputData(inputBuilder.build())
             .build()
 
