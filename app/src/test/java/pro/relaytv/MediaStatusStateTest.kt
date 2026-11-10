@@ -528,4 +528,53 @@ class MediaStatusStateTest {
         assertEquals("http://10.0.55.2:8787", parsed.first().baseUrl)
         assertEquals("tok1", parsed.first().apiToken)
     }
+
+    @Test
+    fun shareActivityExtractsHttpUrlsAcrossIntentFieldsAndFiltersLocalStreamSchemes() {
+        assertEquals(
+            "https://youtu.be/dQw4w9WgXcQ",
+            ShareActivity.extractSharedHttpUrl(
+                extraText = "Watch this (https://youtu.be/dQw4w9WgXcQ),",
+            ),
+        )
+        assertEquals(
+            "https://example.com/video.mp4",
+            ShareActivity.extractSharedHttpUrl(
+                extraText = null,
+                clipCandidates = listOf("not a link", "HTTPS://example.com/video.mp4"),
+            ),
+        )
+        assertEquals(
+            "http://10.0.55.2:8096/Items/123",
+            ShareActivity.extractSharedHttpUrl(
+                extraText = null,
+                extraStreamUri = "content://media/external/video/1",
+                dataUri = "http://10.0.55.2:8096/Items/123",
+            ),
+        )
+        assertNull(
+            ShareActivity.extractSharedHttpUrl(
+                extraText = "plain text without link",
+                extraStreamUri = "content://media/external/video/1",
+            ),
+        )
+
+        assertTrue(ShareActivity.isLocalStreamScheme("content"))
+        assertTrue(ShareActivity.isLocalStreamScheme("FILE"))
+        assertFalse(ShareActivity.isLocalStreamScheme("https"))
+        assertFalse(ShareActivity.isLocalStreamScheme("http"))
+        assertFalse(ShareActivity.isLocalStreamScheme(null))
+    }
+
+    @Test
+    fun shareWorkerClassifiesTransientConnectionFailuresSeparatelyFromReadTimeouts() {
+        assertTrue(ShareWorker.isTransientConnectionError(java.net.ConnectException("Connection refused")))
+        assertTrue(ShareWorker.isTransientConnectionError(java.net.UnknownHostException("relaytv.lan")))
+        assertTrue(ShareWorker.isTransientConnectionError(java.net.NoRouteToHostException("No route to host")))
+        assertTrue(ShareWorker.isTransientConnectionError(java.net.SocketException("Network is unreachable")))
+
+        assertFalse(ShareWorker.isTransientConnectionError(java.net.SocketTimeoutException("Read timed out")))
+        assertFalse(ShareWorker.isTransientConnectionError(java.io.InterruptedIOException("timeout")))
+        assertFalse(ShareWorker.isTransientConnectionError(IllegalStateException("bad payload")))
+    }
 }

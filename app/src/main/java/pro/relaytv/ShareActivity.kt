@@ -1,8 +1,8 @@
 package pro.relaytv
 
 import android.content.ContentResolver
-import android.content.pm.PackageManager
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.database.Cursor
 import android.net.Uri
 import android.os.Bundle
@@ -10,13 +10,15 @@ import android.provider.OpenableColumns
 import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.work.Constraints
+import androidx.work.BackoffPolicy
 import androidx.work.Data
-import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
+import androidx.work.WorkRequest
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 class ShareActivity : AppCompatActivity() {
 
@@ -43,6 +45,41 @@ class ShareActivity : AppCompatActivity() {
             "video/mp4",
             "video/webm",
         )
+
+        internal fun extractUrl(text: String?): String? {
+            if (text.isNullOrBlank()) return null
+            val m = Regex("""https?://\S+""", RegexOption.IGNORE_CASE).find(text)
+            val cleaned = m?.value?.trim()?.trimEnd(')', ']', '>', '"', '\'', ',', ';')
+                ?.takeIf { it.length > "https://".length }
+                ?: return null
+            val colonIdx = cleaned.indexOf("://")
+            return if (colonIdx > 0) {
+                cleaned.substring(0, colonIdx).lowercase() + cleaned.substring(colonIdx)
+            } else {
+                cleaned
+            }
+        }
+
+        internal fun isLocalStreamScheme(scheme: String?): Boolean =
+            scheme.equals(ContentResolver.SCHEME_CONTENT, ignoreCase = true) ||
+                scheme.equals(ContentResolver.SCHEME_FILE, ignoreCase = true)
+
+        internal fun extractSharedHttpUrl(
+            extraText: String?,
+            clipCandidates: List<String> = emptyList(),
+            extraStreamUri: String? = null,
+            dataUri: String? = null,
+            extraSubject: String? = null,
+        ): String? {
+            extractUrl(extraText)?.let { return it }
+            for (candidate in clipCandidates) {
+                extractUrl(candidate)?.let { return it }
+            }
+            extractUrl(extraStreamUri)?.let { return it }
+            extractUrl(dataUri)?.let { return it }
+            extractUrl(extraSubject)?.let { return it }
+            return null
+        }
     }
 
     private sealed class SharePayload {
@@ -55,10 +92,28 @@ class ShareActivity : AppCompatActivity() {
         val errorMessageResId: Int? = null,
     )
 
-    private var stagingInProgress = false
+    private var activeStagingCount = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) {
+            handleShareIntent(intent)
+        } else {
+            finishIfIdle()
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleShareIntent(intent)
+    }
+
+    private fun handleShareIntent(shareIntent: Intent?) {
+        if (shareIntent == null) {
+            finishIfIdle()
+            return
+        }
 
         val base = HostStore.getActiveBaseUrl(this)?.trim()?.trimEnd('/')
         if (base.isNullOrBlank()) {
@@ -67,33 +122,48 @@ class ShareActivity : AppCompatActivity() {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 putExtra("open_servers", true)
             })
-            finish()
+            finishIfIdle()
             return
         }
 
         val endpointPath = resolveMetaString(META_ENDPOINT_PATH).ifBlank { "/smart" }
         val successTemplate = resolveMetaString(META_SUCCESS_TEMPLATE).ifBlank { "Sent to \"%s\"" }
-        val streamUri = extractStreamUri()
+        val streamUri = extractStreamUri(shareIntent)
         if (streamUri != null) {
-            if (stagingInProgress) return
-            stagingInProgress = true
+            activeStagingCount += 1
             Thread {
                 val result = stageLocalMedia(streamUri)
                 runOnUiThread {
+                    activeStagingCount = (activeStagingCount - 1).coerceAtLeast(0)
                     if (result.payload != null) {
                         dispatchPayload(base, endpointPath, successTemplate, result.payload)
                     } else if (result.errorMessageResId != null) {
                         Toast.makeText(this, getString(result.errorMessageResId), Toast.LENGTH_LONG).show()
                     }
-                    finishAndRemoveTask()
+                    finishIfIdle()
                 }
             }.start()
             return
         }
 
-        val payload = extractRemoteUrlPayload() ?: run { finish(); return }
+        val payload = extractRemoteUrlPayload(shareIntent) ?: run {
+            finishIfIdle()
+            return
+        }
         dispatchPayload(base, endpointPath, successTemplate, payload)
-        finishAndRemoveTask()
+        finishIfIdle()
+    }
+
+    private fun finishIfIdle() {
+        if (activeStagingCount <= 0) {
+            finishAndRemoveTask()
+        }
+    }
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun ensureMediaControlService() {
+        if (!AppSettings.isMediaControlsEnabled(this)) return
+        runCatching { startService(Intent(this, MediaControlService::class.java)) }
     }
 
     private fun dispatchPayload(
@@ -102,6 +172,10 @@ class ShareActivity : AppCompatActivity() {
         successTemplate: String,
         payload: SharePayload,
     ) {
+        // Wake MediaControlService while ShareActivity holds foreground start privileges so
+        // system media controls appear when playback starts and the process stays warm.
+        ensureMediaControlService()
+
         val inputBuilder = Data.Builder()
             .putString(ShareWorker.KEY_BASE, base)
             .putString(ShareWorker.KEY_ENDPOINT_PATH, endpointPath)
@@ -129,12 +203,16 @@ class ShareActivity : AppCompatActivity() {
             }
         }
 
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-
+        // Do not attach NetworkType.CONNECTED: JobScheduler requires NET_CAPABILITY_VALIDATED,
+        // which blocks LAN/Tailscale shares when upstream internet is unvalidated and defers
+        // execution until after ShareActivity finishes. Expedited work runs immediately.
         val req = OneTimeWorkRequestBuilder<ShareWorker>()
-            .setConstraints(constraints)
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .setBackoffCriteria(
+                BackoffPolicy.EXPONENTIAL,
+                WorkRequest.MIN_BACKOFF_MILLIS,
+                TimeUnit.MILLISECONDS,
+            )
             .setInputData(inputBuilder.build())
             .build()
 
@@ -153,25 +231,40 @@ class ShareActivity : AppCompatActivity() {
         }
     }
 
-    private fun extractUrl(text: String): String? {
-        val m = Regex("""https?://\S+""").find(text)
-        return m?.value?.trim()?.trimEnd(')', ']', '>', '"', '\'')
-    }
-
-    private fun extractRemoteUrlPayload(): SharePayload? {
-        val shared = intent.getStringExtra(Intent.EXTRA_TEXT) ?: ""
-        val url = extractUrl(shared) ?: return null
+    private fun extractRemoteUrlPayload(shareIntent: Intent): SharePayload? {
+        @Suppress("DEPRECATION")
+        val extraStream = shareIntent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)?.toString()
+        val clip = shareIntent.clipData
+        val clipCandidates = buildList {
+            if (clip != null) {
+                for (i in 0 until clip.itemCount) {
+                    val item = clip.getItemAt(i) ?: continue
+                    item.text?.toString()?.takeIf { it.isNotBlank() }?.let { add(it) }
+                    item.uri?.toString()?.takeIf { it.isNotBlank() }?.let { add(it) }
+                }
+            }
+        }
+        val url = extractSharedHttpUrl(
+            extraText = shareIntent.getStringExtra(Intent.EXTRA_TEXT),
+            clipCandidates = clipCandidates,
+            extraStreamUri = extraStream,
+            dataUri = shareIntent.dataString,
+            extraSubject = shareIntent.getStringExtra(Intent.EXTRA_SUBJECT),
+        ) ?: return null
         return SharePayload.RemoteUrl(url)
     }
 
-    private fun extractStreamUri(): Uri? {
+    private fun extractStreamUri(shareIntent: Intent): Uri? {
         @Suppress("DEPRECATION")
-        val extra = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
-        if (extra != null) return extra
-        if (!intent.getStringExtra(Intent.EXTRA_TEXT).isNullOrBlank()) return null
-        val clip = intent.clipData
+        val extra = shareIntent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+        if (extra != null && isLocalStreamScheme(extra.scheme)) return extra
+        if (!shareIntent.getStringExtra(Intent.EXTRA_TEXT).isNullOrBlank()) return null
+        val clip = shareIntent.clipData
         if (clip != null && clip.itemCount > 0) {
-            return clip.getItemAt(0)?.uri
+            val clipUri = clip.getItemAt(0)?.uri
+            if (clipUri != null && isLocalStreamScheme(clipUri.scheme)) {
+                return clipUri
+            }
         }
         return null
     }

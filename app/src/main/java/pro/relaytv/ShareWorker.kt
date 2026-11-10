@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.work.ForegroundInfo
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import org.json.JSONObject
@@ -29,6 +30,7 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
         const val KEY_UPLOAD_TITLE = "upload_title"
         private const val CHANNEL_ID = "relaytv_silent"
         private const val MAX_RETRY_ATTEMPTS = 3
+        private val FAST_RETRY_DELAYS_MS = longArrayOf(1_000L, 2_000L)
 
         internal enum class ExceptionAction {
             SUCCESS_PROCESSING,
@@ -44,6 +46,14 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
                 return true
             }
             return (error.message ?: "").contains("timeout", ignoreCase = true)
+        }
+
+        internal fun isTransientConnectionError(error: Throwable): Boolean {
+            if (isTimeoutError(error)) return false
+            return error is java.net.ConnectException ||
+                error is java.net.UnknownHostException ||
+                error is java.net.NoRouteToHostException ||
+                error is java.net.SocketException
         }
 
         internal fun resolveExceptionAction(
@@ -96,6 +106,20 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
         }
     }
 
+    override fun getForegroundInfo(): ForegroundInfo {
+        val nm = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        ensureNotificationChannel(nm)
+        val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle(applicationContext.getString(R.string.app_name))
+            .setContentText("Sending to RelayTV…")
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+        return ForegroundInfo(id.hashCode(), notification)
+    }
+
     override fun doWork(): Result {
         val base = inputData.getString(KEY_BASE)?.trim()?.trimEnd('/') ?: return Result.failure()
         val endpointPath = inputData.getString(KEY_ENDPOINT_PATH)?.trim()?.ifBlank { "/smart" } ?: "/smart"
@@ -109,14 +133,20 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
 
         return try {
             if (localUpload != null && endpointPath == "/play_now") {
-                val playResult = uploadAndPlayMedia(base, localUpload, apiToken)
+                val playResult = executeWithFastRetry {
+                    uploadAndPlayMedia(base, localUpload, apiToken)
+                }
+                ensureMediaControlService()
                 postNotification(playResult.title, displayText, tapToOpen = true)
                 localUpload.delete()
                 return Result.success()
             }
 
             if (localUpload != null) {
-                val enqueueResult = uploadAndEnqueueMedia(base, localUpload, apiToken)
+                val enqueueResult = executeWithFastRetry {
+                    uploadAndEnqueueMedia(base, localUpload, apiToken)
+                }
+                ensureMediaControlService()
                 postNotification(enqueueResult.title, displayText, tapToOpen = true)
                 localUpload.delete()
                 return Result.success()
@@ -128,31 +158,34 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
                 .put("url", url)
                 .put("request_id", id.toString())
                 .toString()
-            val req = Net.postJson(base + endpointPath, payload, apiToken)
 
-            Net.client.newCall(req).execute().use { resp ->
-                val body = resp.body?.string().orEmpty()
-                val ok = resp.isSuccessful
-                val msg = parseShareResponseMessage(resp.code, ok, body)
+            val (code, ok, body) = executeWithFastRetry {
+                val req = Net.postJson(base + endpointPath, payload, apiToken)
+                Net.client.newCall(req).execute().use { resp ->
+                    Triple(resp.code, resp.isSuccessful, resp.body?.string().orEmpty())
+                }
+            }
+            val msg = parseShareResponseMessage(code, ok, body)
 
-                postNotification(msg, displayText, tapToOpen = true)
-                when {
-                    ok -> {
-                        localUpload?.delete()
-                        Result.success()
-                    }
-                    shouldRetry(resp.code) && canRetryAttempt(runAttemptCount) -> Result.retry()
-                    else -> {
-                        localUpload?.delete()
-                        Result.failure()
-                    }
+            when {
+                ok -> {
+                    localUpload?.delete()
+                    ensureMediaControlService()
+                    postNotification(msg, displayText, tapToOpen = true)
+                    Result.success()
+                }
+                shouldRetry(code) && canRetryAttempt(runAttemptCount) -> Result.retry()
+                else -> {
+                    localUpload?.delete()
+                    postNotification(msg, displayText, tapToOpen = true)
+                    Result.failure()
                 }
             }
         } catch (e: ShareFailure) {
-            postNotification("Send failed: ${e.message.orEmpty().take(80)}", displayText, tapToOpen = true)
             val canRetry = e.retryable && canRetryAttempt(runAttemptCount)
             if (!canRetry) {
                 localUpload?.delete()
+                postNotification("Send failed: ${e.message.orEmpty().take(80)}", displayText, tapToOpen = true)
             }
             if (canRetry) Result.retry() else Result.failure()
         } catch (e: Exception) {
@@ -165,11 +198,11 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
                 )
             ) {
                 ExceptionAction.SUCCESS_PROCESSING -> {
+                    ensureMediaControlService()
                     postNotification("Sent (processing)", displayText, tapToOpen = true)
                     Result.success()
                 }
                 ExceptionAction.RETRY -> {
-                    postNotification("Send failed: $reason", displayText, tapToOpen = true)
                     Result.retry()
                 }
                 ExceptionAction.FAILURE -> {
@@ -178,6 +211,39 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
                     Result.failure()
                 }
             }
+        }
+    }
+
+    /**
+     * Retries immediate socket/route failures in-worker to bridge short Wi-Fi or VPN wake-from-sleep
+     * handshakes without waiting 10–30s for JobScheduler backoff.
+     */
+    private fun <T> executeWithFastRetry(block: () -> T): T {
+        var attempt = 0
+        while (true) {
+            try {
+                return block()
+            } catch (e: Exception) {
+                if (isStopped || !isTransientConnectionError(e) || attempt >= FAST_RETRY_DELAYS_MS.size) {
+                    throw e
+                }
+                val delayMs = FAST_RETRY_DELAYS_MS[attempt]
+                attempt += 1
+                try {
+                    Thread.sleep(delayMs)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw e
+                }
+            }
+        }
+    }
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun ensureMediaControlService() {
+        if (!AppSettings.isMediaControlsEnabled(applicationContext)) return
+        runCatching {
+            applicationContext.startService(Intent(applicationContext, MediaControlService::class.java))
         }
     }
 
@@ -262,11 +328,14 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
         return code == 408 || code == 429 || code >= 500
     }
 
-    private fun postNotification(title: String, text: String, tapToOpen: Boolean) {
-        val nm = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
+    private fun ensureNotificationChannel(nm: NotificationManager) {
         val ch = NotificationChannel(CHANNEL_ID, "RelayTV", NotificationManager.IMPORTANCE_LOW)
         nm.createNotificationChannel(ch)
+    }
+
+    private fun postNotification(title: String, text: String, tapToOpen: Boolean) {
+        val nm = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        ensureNotificationChannel(nm)
 
         val builder = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)

@@ -179,6 +179,9 @@ class MediaControlService : MediaSessionService() {
         }
         // Keep the idle timer fresh while the app keeps nudging us.
         lastActiveAt = SystemClock.elapsedRealtime()
+        if (disconnectedAtMs == null) {
+            consecutivePollFailures = 0
+        }
         synchronizeActiveHost()
         return START_NOT_STICKY
     }
@@ -225,6 +228,7 @@ class MediaControlService : MediaSessionService() {
             retireRealtime()
             clearMediaState("RelayTV")
             renderStatus(RemoteStatus.IDLE, "RelayTV", base = null)
+            stopSelf()
             return
         }
         ensureRealtime(host, base)
@@ -382,7 +386,17 @@ class MediaControlService : MediaSessionService() {
     }
 
     private fun synchronizeActiveHost() {
-        if (disconnectedAtMs != null) return
+        if (disconnectedAtMs != null) {
+            if (runCatching { connectivityManager.activeNetwork != null }.getOrDefault(false)) {
+                disconnectedAtMs = null
+                handler.removeCallbacks(disconnectedStateExpiry)
+                consecutivePollFailures = 0
+                pushHealthy = false
+                realtimeClient?.restart()?.let { realtimeOwner = it }
+            } else {
+                return
+            }
+        }
         val host = HostStore.getActiveHost(this)
         val base = host?.let { HostStore.normalizeBaseUrl(it.baseUrl) }
         if (host == null || base.isNullOrBlank()) {
