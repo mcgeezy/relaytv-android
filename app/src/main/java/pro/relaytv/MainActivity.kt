@@ -86,7 +86,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
-        private const val HEARTBEAT_OK_MS = 15_000L
+        private const val HEARTBEAT_OK_MS = 30_000L
         private const val HEARTBEAT_BASE_RETRY_MS = 4_000L
         private const val HEARTBEAT_MAX_RETRY_MS = 60_000L
     }
@@ -314,6 +314,7 @@ class MainActivity : AppCompatActivity() {
         isInForeground = true
         if (this::web.isInitialized) {
             web.onResume()
+            web.resumeTimers()
         }
         registerNetworkCallback()
         ensureMediaControlService()
@@ -336,9 +337,11 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         if (this::web.isInitialized) {
             web.onPause()
+            web.pauseTimers()
         }
         super.onPause()
         isInForeground = false
+        mdnsScanner?.stop()
         unregisterNetworkCallback()
         uiHandler.removeCallbacks(heartbeatRunnable)
     }
@@ -458,8 +461,11 @@ class MainActivity : AppCompatActivity() {
                     }
                     val recovered = consecutiveHealthFailures > 0
                     consecutiveHealthFailures = 0
-                    // Keep the media-controls service alive while we can see the server.
-                    ensureMediaControlService()
+                    // Keep observing playback while the UI is visible: playback started in
+                    // the WebView does not otherwise wake a service that stopped while idle.
+                    if (isInForeground) {
+                        ensureMediaControlService()
+                    }
                     if (recovered && !manualRefresh) {
                         Toast.makeText(
                             this@MainActivity,

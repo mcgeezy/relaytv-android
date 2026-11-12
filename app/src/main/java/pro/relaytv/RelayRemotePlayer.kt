@@ -36,18 +36,47 @@ class RelayRemotePlayer(
     private var status: RemoteStatus = RemoteStatus.IDLE
     private var serverName: String = "RelayTV"
     private var artworkBytes: ByteArray? = null
+    private var hasPublishedInitialState = false
+
+    private var cachedMetadataTitle: String? = null
+    private var cachedMetadataArtist: String? = null
+    private var cachedMetadataArtwork: ByteArray? = null
+    private var cachedMediaMetadata: MediaMetadata? = null
 
     // Anchor for extrapolating the playback position between server updates.
     private var anchorPositionMs: Long = 0
     private var anchorElapsedRealtime: Long = SystemClock.elapsedRealtime()
 
+    companion object {
+        // Placeholder neighbours let controllers issue next/previous, which we
+        // forward to the server's queue instead of a local playlist.
+        private val PREVIOUS_ITEM = MediaItemData.Builder("previous")
+            .setMediaItem(MediaItem.Builder().setMediaId("previous").build())
+            .build()
+        private val NEXT_ITEM = MediaItemData.Builder("next")
+            .setMediaItem(MediaItem.Builder().setMediaId("next").build())
+            .build()
+    }
+
     /** Must be called on the application looper. */
     fun updateStatus(newStatus: RemoteStatus, newServerName: String, artwork: ByteArray?) {
+        val currentExtrapolatedMs = extrapolatedPositionMs()
+        val shouldInvalidate = !hasPublishedInitialState ||
+            newServerName != serverName ||
+            artwork !== artworkBytes ||
+            shouldInvalidatePlayerState(
+                previous = status,
+                next = newStatus,
+                extrapolatedPositionMs = currentExtrapolatedMs,
+            )
         status = newStatus
         serverName = newServerName
         artworkBytes = artwork
         setPositionAnchor((newStatus.positionSec ?: 0.0) * 1000.0)
-        invalidateState()
+        if (shouldInvalidate) {
+            hasPublishedInitialState = true
+            invalidateState()
+        }
     }
 
     fun isActive(): Boolean = status.active
@@ -83,19 +112,30 @@ class RelayRemotePlayer(
             ?: C.TIME_UNSET
         val seekable = s.isSeekable && durationUs != C.TIME_UNSET
 
-        val metadata = MediaMetadata.Builder()
-            .setTitle(s.title ?: "Playing on $serverName")
-            .setArtist(serverName)
-            .apply {
-                artworkBytes?.let { setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER) }
-            }
-            .build()
+        val resolvedTitle = s.title ?: "Playing on $serverName"
+        val metadata = if (
+            cachedMediaMetadata != null &&
+            cachedMetadataTitle == resolvedTitle &&
+            cachedMetadataArtist == serverName &&
+            cachedMetadataArtwork === artworkBytes
+        ) {
+            cachedMediaMetadata!!
+        } else {
+            MediaMetadata.Builder()
+                .setTitle(resolvedTitle)
+                .setArtist(serverName)
+                .apply {
+                    artworkBytes?.let { setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER) }
+                }
+                .build()
+                .also {
+                    cachedMetadataTitle = resolvedTitle
+                    cachedMetadataArtist = serverName
+                    cachedMetadataArtwork = artworkBytes
+                    cachedMediaMetadata = it
+                }
+        }
 
-        // Placeholder neighbours let controllers issue next/previous, which we
-        // forward to the server's queue instead of a local playlist.
-        val previousItem = MediaItemData.Builder("previous")
-            .setMediaItem(MediaItem.Builder().setMediaId("previous").build())
-            .build()
         val currentItem = MediaItemData.Builder("current")
             .setMediaItem(
                 MediaItem.Builder()
@@ -105,9 +145,6 @@ class RelayRemotePlayer(
             )
             .setDurationUs(durationUs)
             .setIsSeekable(seekable)
-            .build()
-        val nextItem = MediaItemData.Builder("next")
-            .setMediaItem(MediaItem.Builder().setMediaId("next").build())
             .build()
 
         val commands = Player.Commands.Builder()
@@ -132,7 +169,7 @@ class RelayRemotePlayer(
 
         val builder = State.Builder()
             .setAvailableCommands(commands)
-            .setPlaylist(listOf(previousItem, currentItem, nextItem))
+            .setPlaylist(listOf(PREVIOUS_ITEM, currentItem, NEXT_ITEM))
             .setCurrentMediaItemIndex(1)
             .setPlaybackState(Player.STATE_READY)
             .setPlayWhenReady(!s.paused, Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE)

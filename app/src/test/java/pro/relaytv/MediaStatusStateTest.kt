@@ -365,4 +365,216 @@ class MediaStatusStateTest {
         )
         assertTrue(ShareWorker.isTimeoutError(java.net.SocketTimeoutException()))
     }
+
+    @Test
+    fun playerStateInvalidationSkipsSmallPositionTicksAndFiresOnMeaningfulChanges() {
+        val base = RemoteStatus(
+            playing = true,
+            paused = false,
+            positionSec = 10.0,
+            durationSec = 120.0,
+            title = "Episode 1",
+            thumbnail = "/thumb.jpg",
+            volumePercent = 50,
+        )
+
+        // Position advanced by 1s and matches local extrapolation within 1.5s -> skip invalidation
+        assertFalse(
+            shouldInvalidatePlayerState(
+                previous = base,
+                next = base.copy(positionSec = 11.0),
+                extrapolatedPositionMs = 10_950L,
+            )
+        )
+
+        // Position jumped by > 1.5s (seek) -> invalidate
+        assertTrue(
+            shouldInvalidatePlayerState(
+                previous = base,
+                next = base.copy(positionSec = 30.0),
+                extrapolatedPositionMs = 11_000L,
+            )
+        )
+
+        // Pause state changed -> invalidate
+        assertTrue(
+            shouldInvalidatePlayerState(
+                previous = base,
+                next = base.copy(paused = true),
+                extrapolatedPositionMs = 10_000L,
+            )
+        )
+
+        // Volume changed -> invalidate
+        assertTrue(
+            shouldInvalidatePlayerState(
+                previous = base,
+                next = base.copy(volumePercent = 55),
+                extrapolatedPositionMs = 10_000L,
+            )
+        )
+
+        // Repeated IDLE -> IDLE does not re-invalidate
+        assertFalse(
+            shouldInvalidatePlayerState(
+                previous = RemoteStatus.IDLE,
+                next = RemoteStatus.IDLE,
+                extrapolatedPositionMs = 0L,
+            )
+        )
+    }
+
+    @Test
+    fun pollDelayBacksOffExponentiallyAcrossIdleFailures() {
+        val playing = RemoteStatus(playing = true, paused = false)
+        val paused = RemoteStatus(playing = true, paused = true)
+
+        assertEquals(3_000L, pollDelayForStatusMs(playing, consecutiveFailures = 0))
+        assertEquals(5_000L, pollDelayForStatusMs(paused, consecutiveFailures = 0))
+        assertEquals(10_000L, pollDelayForStatusMs(RemoteStatus.IDLE, consecutiveFailures = 0))
+        assertEquals(10_000L, pollDelayForStatusMs(RemoteStatus.IDLE, consecutiveFailures = 1))
+        assertEquals(20_000L, pollDelayForStatusMs(RemoteStatus.IDLE, consecutiveFailures = 2))
+        assertEquals(40_000L, pollDelayForStatusMs(RemoteStatus.IDLE, consecutiveFailures = 3))
+        assertEquals(60_000L, pollDelayForStatusMs(RemoteStatus.IDLE, consecutiveFailures = 4))
+        assertEquals(60_000L, pollDelayForStatusMs(RemoteStatus.IDLE, consecutiveFailures = 8))
+    }
+
+    @Test
+    fun idleStopDelayHandlesNullStatusAndAcceleratesWhenUnreachable() {
+        assertNull(
+            remainingIdleStopDelayMs(
+                status = RemoteStatus(playing = true),
+                nowElapsedMs = 50_000L,
+                lastActiveElapsedMs = 0L,
+                idleStopMs = 300_000L,
+            )
+        )
+        assertEquals(
+            200_000L,
+            remainingIdleStopDelayMs(
+                status = RemoteStatus.IDLE,
+                nowElapsedMs = 100_000L,
+                lastActiveElapsedMs = 0L,
+                idleStopMs = 300_000L,
+                consecutivePollFailures = 1,
+                unreachableStopMs = 90_000L,
+            ),
+        )
+        // Null status after poll failure still expires on the unreachable threshold
+        assertEquals(
+            0L,
+            remainingIdleStopDelayMs(
+                status = null,
+                nowElapsedMs = 95_000L,
+                lastActiveElapsedMs = 0L,
+                idleStopMs = 300_000L,
+                consecutivePollFailures = 3,
+                unreachableStopMs = 90_000L,
+            ),
+        )
+    }
+
+    @Test
+    fun disconnectedPlaybackExpiresEvenWhenActiveOrNudgedByForeground() {
+        val playing = RemoteStatus(playing = true)
+        // Disconnect at 10s. A foreground start at 80s must not extend the 100s deadline.
+        assertEquals(
+            20_000L,
+            remainingIdleStopDelayMs(
+                status = playing,
+                nowElapsedMs = 80_000L,
+                lastActiveElapsedMs = 80_000L,
+                idleStopMs = 300_000L,
+                unreachableStopMs = 90_000L,
+                disconnectedAtMs = 10_000L,
+            ),
+        )
+        for (status in listOf(playing, RemoteStatus.IDLE, null)) {
+            assertEquals(
+                0L,
+                remainingIdleStopDelayMs(
+                    status = status,
+                    nowElapsedMs = 100_000L,
+                    lastActiveElapsedMs = 99_000L,
+                    idleStopMs = 300_000L,
+                    unreachableStopMs = 90_000L,
+                    disconnectedAtMs = 10_000L,
+                ),
+            )
+        }
+        // Reconnecting removes the offline deadline and restores normal playback lifetime.
+        assertNull(
+            remainingIdleStopDelayMs(
+                status = playing,
+                nowElapsedMs = 100_000L,
+                lastActiveElapsedMs = 99_000L,
+                idleStopMs = 300_000L,
+                unreachableStopMs = 90_000L,
+                disconnectedAtMs = null,
+            ),
+        )
+    }
+
+    @Test
+    fun hostStoreParsesAndNormalizesSavedHostsJson() {
+        val parsed = HostStore.parseHostsJson(
+            """[
+                {"id":"h1","name":"Living Room","baseUrl":"10.0.55.2:8787/","apiToken":"  tok1 "},
+                {"id":"","name":"Invalid","baseUrl":"http://10.0.55.3:8787"}
+            ]"""
+        )
+        assertEquals(1, parsed.size)
+        assertEquals("h1", parsed.first().id)
+        assertEquals("http://10.0.55.2:8787", parsed.first().baseUrl)
+        assertEquals("tok1", parsed.first().apiToken)
+    }
+
+    @Test
+    fun shareActivityExtractsHttpUrlsAcrossIntentFieldsAndFiltersLocalStreamSchemes() {
+        assertEquals(
+            "https://youtu.be/dQw4w9WgXcQ",
+            ShareActivity.extractSharedHttpUrl(
+                extraText = "Watch this (https://youtu.be/dQw4w9WgXcQ),",
+            ),
+        )
+        assertEquals(
+            "https://example.com/video.mp4",
+            ShareActivity.extractSharedHttpUrl(
+                extraText = null,
+                clipCandidates = listOf("not a link", "HTTPS://example.com/video.mp4"),
+            ),
+        )
+        assertEquals(
+            "http://10.0.55.2:8096/Items/123",
+            ShareActivity.extractSharedHttpUrl(
+                extraText = null,
+                extraStreamUri = "content://media/external/video/1",
+                dataUri = "http://10.0.55.2:8096/Items/123",
+            ),
+        )
+        assertNull(
+            ShareActivity.extractSharedHttpUrl(
+                extraText = "plain text without link",
+                extraStreamUri = "content://media/external/video/1",
+            ),
+        )
+
+        assertTrue(ShareActivity.isLocalStreamScheme("content"))
+        assertTrue(ShareActivity.isLocalStreamScheme("FILE"))
+        assertFalse(ShareActivity.isLocalStreamScheme("https"))
+        assertFalse(ShareActivity.isLocalStreamScheme("http"))
+        assertFalse(ShareActivity.isLocalStreamScheme(null))
+    }
+
+    @Test
+    fun shareWorkerClassifiesTransientConnectionFailuresSeparatelyFromReadTimeouts() {
+        assertTrue(ShareWorker.isTransientConnectionError(java.net.ConnectException("Connection refused")))
+        assertTrue(ShareWorker.isTransientConnectionError(java.net.UnknownHostException("relaytv.lan")))
+        assertTrue(ShareWorker.isTransientConnectionError(java.net.NoRouteToHostException("No route to host")))
+        assertTrue(ShareWorker.isTransientConnectionError(java.net.SocketException("Network is unreachable")))
+
+        assertFalse(ShareWorker.isTransientConnectionError(java.net.SocketTimeoutException("Read timed out")))
+        assertFalse(ShareWorker.isTransientConnectionError(java.io.InterruptedIOException("timeout")))
+        assertFalse(ShareWorker.isTransientConnectionError(IllegalStateException("bad payload")))
+    }
 }
