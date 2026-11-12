@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.2](https://github.com/mcgeezy/relaytv-android/compare/v1.5.1...v1.5.2) (2026-11-12)
+
+
+### Bug Fixes
+
+* optimize battery usage across media session, polling, and WebView lifecycle ([#15](https://github.com/mcgeezy/relaytv-android/issues/15)) ([a65dde5](https://github.com/mcgeezy/relaytv-android/commit/a65dde5a76743b7d66c5c03c4817b56ecb9d7272))
+
 ## [1.5.1](https://github.com/mcgeezy/relaytv-android/compare/v1.5.0...v1.5.1) (2026-11-05)
 
 
