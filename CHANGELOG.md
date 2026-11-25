@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.6.0](https://github.com/mcgeezy/relaytv-android/compare/v1.5.2...v1.6.0) (2026-11-25)
+
+
+### Features
+
+* replace top toolbar with frameless edge-to-edge WebView bridge and bottom sheet server picker ([#17](https://github.com/mcgeezy/relaytv-android/issues/17)) ([d17f247](https://github.com/mcgeezy/relaytv-android/commit/d17f2479948da70fd5ff63fa1842c7ad09058482))
+
+
+### Documentation
+
+* refresh screenshots and release checklist for frameless header and bottom sheet ([#19](https://github.com/mcgeezy/relaytv-android/issues/19)) ([8fcf140](https://github.com/mcgeezy/relaytv-android/commit/8fcf1407402469710004469c5b06ec86c05372cc))
+
 ## [1.5.2](https://github.com/mcgeezy/relaytv-android/compare/v1.5.1...v1.5.2) (2026-11-12)
 
 
