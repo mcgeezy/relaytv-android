@@ -1,15 +1,27 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <style name="Theme.RelayTV" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="colorPrimary">@color/relaytv_primary</item>
         <item name="colorOnPrimary">@color/relaytv_on_primary</item>
         <item name="colorSecondary">@color/relaytv_secondary</item>
         <item name="colorOnSecondary">@color/relaytv_on_secondary</item>
-        <item name="android:navigationBarColor">@color/relaytv_surface</item>
-        <item name="android:colorBackground">@color/relaytv_surface</item>
-
+        <item name="android:colorBackground">@color/relaytv_canvas_dark</item>
+        <item name="android:windowBackground">@color/relaytv_canvas_dark</item>
     </style>
+
     <style name="Theme.RelayTV.NoActionBar" parent="Theme.RelayTV" />
+
+    <style name="ThemeOverlay.RelayTV.BottomSheetDialog" parent="ThemeOverlay.Material3.BottomSheetDialog">
+        <item name="bottomSheetStyle">@style/Widget.RelayTV.BottomSheet</item>
+        <item name="android:navigationBarColor">@color/relaytv_sheet_surface</item>
+    </style>
+
+    <style name="Widget.RelayTV.BottomSheet" parent="Widget.Material3.BottomSheet.Modal">
+        <item name="android:background">@android:color/transparent</item>
+        <item name="backgroundTint">@android:color/transparent</item>
+    </style>
+
     <style name="Theme.RelayTV.Share" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>

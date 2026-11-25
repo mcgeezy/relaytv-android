@@ -50,4 +50,10 @@
     <string name="media_controls_summary">Show system media controls (lock screen and quick settings) for playback on the active server</string>
     <string name="settings_manage_servers">Manage servers</string>
     <string name="settings_manage_servers_summary">Add, edit, or switch RelayTV servers</string>
+    <string name="action_add">Add</string>
+    <string name="action_edit">Edit</string>
+    <string name="action_remove">Remove</string>
+    <string name="action_exit">Exit</string>
+    <string name="privacy_short">Privacy</string>
+    <string name="fallback_server_offline">Server offline</string>
 </resources>
