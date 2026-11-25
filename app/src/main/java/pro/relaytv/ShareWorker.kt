@@ -75,6 +75,67 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
             }.getOrNull()
         }
 
+        private val SENSITIVE_QUERY_KEYS = setOf(
+            "access_token",
+            "apikey",
+            "api_key",
+            "auth",
+            "authorization",
+            "auth_token",
+            "cookie",
+            "exp",
+            "expires",
+            "hdnea",
+            "hdnts",
+            "jwt",
+            "key-pair-id",
+            "pass",
+            "passwd",
+            "password",
+            "policy",
+            "pwd",
+            "sig",
+            "signature",
+            "token",
+            "user",
+            "username",
+            "usr",
+            "x-emby-token",
+            "x-jellyfin-token",
+            "x-plex-token",
+        )
+
+        internal fun sanitizeUrlForDisplay(rawUrl: String?): String? {
+            val s = rawUrl?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+            val schemeIdx = s.indexOf("://")
+            if (schemeIdx <= 0) return s
+            val scheme = s.substring(0, schemeIdx).lowercase()
+            val afterScheme = s.substring(schemeIdx + 3)
+            val authorityEnd = afterScheme.indexOfAny(charArrayOf('/', '?', '#'))
+                .let { if (it < 0) afterScheme.length else it }
+            val authority = afterScheme.substring(0, authorityEnd)
+            val hostPort = authority.substringAfterLast('@')
+            if (hostPort.isBlank() || hostPort.startsWith(':')) return null
+
+            val remainder = afterScheme.substring(authorityEnd).substringBefore('#')
+            val qIdx = remainder.indexOf('?')
+            if (qIdx < 0) {
+                return "$scheme://$hostPort$remainder"
+            }
+            val path = remainder.substring(0, qIdx)
+            val rawQuery = remainder.substring(qIdx + 1)
+            val safeParams = rawQuery.split('&').filter { pair ->
+                if (pair.isEmpty()) return@filter false
+                val rawKey = pair.substringBefore('=')
+                val key = runCatching {
+                    java.net.URLDecoder.decode(rawKey.replace("+", "%2B"), Charsets.UTF_8.name())
+                }.getOrDefault(rawKey).trim().lowercase()
+                key !in SENSITIVE_QUERY_KEYS && !key.startsWith("x-amz-")
+            }
+            val querySuffix = if (safeParams.isEmpty()) "" else "?${safeParams.joinToString("&")}"
+            return "$scheme://$hostPort$path$querySuffix"
+        }
+
         internal fun parseShareResponseMessage(code: Int, ok: Boolean, body: String): String {
             if (code == 401) return "API token required"
             if (!ok) {
@@ -128,7 +189,7 @@ class ShareWorker(appContext: Context, params: WorkerParameters) : Worker(appCon
         val localUpload = uploadPath.takeIf { it.isNotBlank() }?.let { File(it) }
         val displayText = inputData.getString(KEY_UPLOAD_TITLE)?.takeIf { !it.isNullOrBlank() }
             ?: localUpload?.name
-            ?: inputData.getString(KEY_URL)
+            ?: sanitizeUrlForDisplay(inputData.getString(KEY_URL))
             ?: "item"
 
         return try {
