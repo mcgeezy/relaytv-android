@@ -1,27 +1,63 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootContainer"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="@color/relaytv_canvas_dark">
 
-    <com.google.android.material.appbar.AppBarLayout
-        android:id="@+id/appBar"
+    <FrameLayout
+        android:id="@+id/webContainer"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content">
+        android:layout_height="match_parent">
 
-        <com.google.android.material.appbar.MaterialToolbar
-            android:id="@+id/toolbar"
+        <WebView
+            android:id="@+id/web"
             android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:id="@+id/fallbackPill"
+        android:layout_width="wrap_content"
+        android:layout_height="40dp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="16dp"
+        android:background="@drawable/bg_fallback_pill"
+        android:clickable="true"
+        android:contentDescription="@string/servers"
+        android:elevation="8dp"
+        android:focusable="true"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="14dp"
+        android:paddingEnd="12dp"
+        android:visibility="gone">
+
+        <View
+            android:id="@+id/fallbackPillDot"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:background="@drawable/bg_status_dot" />
+
+        <TextView
+            android:id="@+id/fallbackPillLabel"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:title="@string/app_name"
-            app:titleTextColor="@android:color/white"
-            app:menu="@menu/main_menu" />
-    </com.google.android.material.appbar.AppBarLayout>
+            android:layout_marginStart="8dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:maxWidth="180dp"
+            android:text="@string/servers"
+            android:textColor="@color/relaytv_text_primary"
+            android:textSize="13sp"
+            android:textStyle="bold" />
 
-    <WebView
-        android:id="@+id/web"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        app:layout_behavior="@string/appbar_scrolling_view_behavior" />
+        <ImageView
+            android:layout_width="16dp"
+            android:layout_height="16dp"
+            android:layout_marginStart="4dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_chevron_down" />
+    </LinearLayout>
 
-</androidx.coordinatorlayout.widget.CoordinatorLayout>
+</FrameLayout>

@@ -5,6 +5,8 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.Uri
@@ -15,26 +17,33 @@ import android.os.Looper
 import android.text.InputType
 import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
+import android.webkit.JavascriptInterface
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.webkit.ValueCallback
 import android.widget.ArrayAdapter
-import android.widget.LinearLayout
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.ListView
+import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.OnBackPressedCallback
-import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import com.google.android.material.appbar.AppBarLayout
-import com.google.android.material.appbar.MaterialToolbar
+import androidx.core.view.WindowInsetsControllerCompat
+import com.google.android.material.bottomsheet.BottomSheetBehavior
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import okhttp3.Call
 import okhttp3.Callback
@@ -63,10 +72,14 @@ class MainActivity : AppCompatActivity() {
     private val uiHandler = Handler(Looper.getMainLooper())
     private val connectivityManager by lazy { getSystemService(ConnectivityManager::class.java) }
 
+    private lateinit var rootContainer: View
+    private lateinit var webContainer: View
     private lateinit var web: WebView
-    private lateinit var appBar: AppBarLayout
-    private lateinit var toolbar: MaterialToolbar
+    private lateinit var fallbackPill: View
+    private lateinit var fallbackPillDot: View
+    private lateinit var fallbackPillLabel: TextView
 
+    private var appVersionName: String = "dev"
     private var activeBaseUrl: String? = null
     private var consecutiveHealthFailures = 0
     private var healthRequestInFlight = false
@@ -74,10 +87,24 @@ class MainActivity : AppCompatActivity() {
     private var initialLoadComplete = false
     private var networkCallbackRegistered = false
     private var isInForeground = false
+    private var bridgeReady = false
+    private var serverOffline = false
+    private var legacyGraceElapsed = false
+    private var lastLeftInsetPx = 0
+    private var lastTopInsetPx = 0
+    private var lastRightInsetPx = 0
+    private var lastBottomInsetPx = 0
     private var mdnsScanner: NsdRelayTvScanner? = null
     private var pendingWebFileCallback: ValueCallback<Array<Uri>>? = null
+    private var serverPickerDialog: BottomSheetDialog? = null
 
     private val heartbeatRunnable = Runnable { runHeartbeat() }
+    private val legacyFallbackRunnable = Runnable {
+        if (!bridgeReady) {
+            legacyGraceElapsed = true
+            updateFallbackPill()
+        }
+    }
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -98,7 +125,60 @@ class MainActivity : AppCompatActivity() {
         FAILED,
     }
 
+    private inner class RelayTvAndroidBridge {
+        private fun runTrustedUiAction(action: () -> Unit) {
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (!WebBridgePolicy.isTrustedBridgeOrigin(activeBaseUrl, web.url)) {
+                    return@runOnUiThread
+                }
+                action()
+            }
+        }
+
+        @JavascriptInterface
+        fun onBridgeReady() {
+            runTrustedUiAction { markBridgeReady() }
+        }
+
+        @JavascriptInterface
+        fun openServers() {
+            runTrustedUiAction { showServerPicker() }
+        }
+
+        @JavascriptInterface
+        fun openSettings() {
+            runTrustedUiAction { this@MainActivity.openSettings() }
+        }
+
+        @JavascriptInterface
+        fun reload() {
+            runTrustedUiAction {
+                loadActiveServer(forcePickerOnFailure = false, manualRefresh = true)
+            }
+        }
+
+        @JavascriptInterface
+        fun openPrivacy() {
+            runTrustedUiAction { openPrivacyPolicy() }
+        }
+
+        @JavascriptInterface
+        fun onThemeChanged(effectiveTheme: String?, bgColorHex: String?) {
+            runTrustedUiAction {
+                applyThemeSync(WebBridgePolicy.resolveThemeSync(effectiveTheme, bgColorHex))
+            }
+        }
+
+        @JavascriptInterface
+        fun getAppVersion(): String = appVersionName
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+        )
         super.onCreate(savedInstanceState)
 
         // Android 13+ requires runtime permission for notifications.
@@ -110,10 +190,18 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(R.layout.activity_main)
         val openServers = intent.getBooleanExtra("open_servers", false)
-        appBar = findViewById(R.id.appBar)
-        toolbar = findViewById(R.id.toolbar)
+        rootContainer = findViewById(R.id.rootContainer)
+        webContainer = findViewById(R.id.webContainer)
         web = findViewById(R.id.web)
+        fallbackPill = findViewById(R.id.fallbackPill)
+        fallbackPillDot = findViewById(R.id.fallbackPillDot)
+        fallbackPillLabel = findViewById(R.id.fallbackPillLabel)
+
+        fallbackPill.setOnClickListener { showServerPicker() }
+
+        applyThemeSync(ThemeSyncState(isLight = false, backgroundColor = WebBridgePolicy.DEFAULT_DARK_BG))
         applyWindowInsets()
+
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (this@MainActivity::web.isInitialized && web.canGoBack()) {
@@ -125,28 +213,6 @@ class MainActivity : AppCompatActivity() {
                 isEnabled = true
             }
         })
-
-        toolbar.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                R.id.action_servers -> {
-                    showServerPicker()
-                    true
-                }
-                R.id.action_reload -> {
-                    loadActiveServer(forcePickerOnFailure = false, manualRefresh = true)
-                    true
-                }
-                R.id.action_settings -> {
-                    startActivity(Intent(this, SettingsActivity::class.java))
-                    true
-                }
-                R.id.action_privacy -> {
-                    openPrivacyPolicy()
-                    true
-                }
-                else -> false
-            }
-        }
 
         configureWebView()
 
@@ -183,17 +249,27 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                resetBridgeForPageLoad()
                 syncWebViewApiToken(view, url)
             }
 
             override fun onPageFinished(view: WebView, url: String) {
                 mainFrameFailed = false
+                serverOffline = false
                 syncWebViewApiToken(view, url)
+                if (!bridgeReady) {
+                    uiHandler.removeCallbacks(legacyFallbackRunnable)
+                    uiHandler.postDelayed(legacyFallbackRunnable, WebBridgePolicy.LEGACY_FALLBACK_DELAY_MS)
+                }
+                updateFallbackPill()
             }
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 if (request.isForMainFrame) {
                     mainFrameFailed = true
+                    serverOffline = true
+                    uiHandler.removeCallbacks(legacyFallbackRunnable)
+                    updateFallbackPill()
                     Toast.makeText(
                         this@MainActivity,
                         getString(R.string.connection_lost_retrying),
@@ -263,31 +339,134 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun configureWebView() {
-        val versionName = runCatching {
+        appVersionName = runCatching {
             packageManager.getPackageInfo(packageName, 0).versionName
         }.getOrNull() ?: "dev"
+        web.setBackgroundColor(WebBridgePolicy.DEFAULT_DARK_BG)
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
         web.settings.mediaPlaybackRequiresUserGesture = false
-        web.settings.userAgentString = web.settings.userAgentString + " RelayTV/$versionName"
+        web.settings.userAgentString = web.settings.userAgentString + " RelayTV/$appVersionName"
+        web.addJavascriptInterface(RelayTvAndroidBridge(), "RelayTVAndroid")
     }
 
     private fun applyWindowInsets() {
-        val initialTopPadding = appBar.paddingTop
-        val initialLeftPadding = appBar.paddingLeft
-        val initialRightPadding = appBar.paddingRight
+        val pillLp = fallbackPill.layoutParams as? ViewGroup.MarginLayoutParams
+        val initialPillBottomMargin = pillLp?.bottomMargin ?: 0
 
-        ViewCompat.setOnApplyWindowInsetsListener(appBar) { view: View, insets: WindowInsetsCompat ->
-            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.setPadding(
-                initialLeftPadding + systemBars.left,
-                initialTopPadding + systemBars.top,
-                initialRightPadding + systemBars.right,
-                view.paddingBottom
+        ViewCompat.setOnApplyWindowInsetsListener(rootContainer) { _: View, insets: WindowInsetsCompat ->
+            val contentInsets = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or
+                    WindowInsetsCompat.Type.displayCutout() or
+                    WindowInsetsCompat.Type.ime()
             )
+            lastLeftInsetPx = contentInsets.left
+            lastTopInsetPx = contentInsets.top
+            lastRightInsetPx = contentInsets.right
+            lastBottomInsetPx = contentInsets.bottom
+            applyWebContainerInsets()
+
+            val systemBars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            val lp = fallbackPill.layoutParams as? ViewGroup.MarginLayoutParams
+            if (lp != null) {
+                lp.bottomMargin = initialPillBottomMargin + systemBars.bottom
+                fallbackPill.layoutParams = lp
+            }
             insets
         }
-        ViewCompat.requestApplyInsets(appBar)
+        ViewCompat.requestApplyInsets(rootContainer)
+    }
+
+    private fun applyWebContainerInsets() {
+        if (!this::webContainer.isInitialized) return
+        if (bridgeReady && this::web.isInitialized) {
+            webContainer.setPadding(
+                lastLeftInsetPx,
+                0,
+                lastRightInsetPx,
+                lastBottomInsetPx,
+            )
+            val density = resources.displayMetrics.density.takeIf { it > 0f } ?: 1f
+            val topDp = kotlin.math.ceil(lastTopInsetPx / density).toInt()
+            web.evaluateJavascript(
+                "document.documentElement.style.setProperty('--relaytv-android-top','${topDp}px');",
+                null,
+            )
+        } else {
+            webContainer.setPadding(
+                lastLeftInsetPx,
+                lastTopInsetPx,
+                lastRightInsetPx,
+                lastBottomInsetPx,
+            )
+        }
+    }
+
+    private fun applyThemeSync(state: ThemeSyncState) {
+        rootContainer.setBackgroundColor(state.backgroundColor)
+        web.setBackgroundColor(state.backgroundColor)
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            isAppearanceLightStatusBars = state.isLight
+            isAppearanceLightNavigationBars = state.isLight
+        }
+    }
+
+    private fun resetBridgeForPageLoad() {
+        bridgeReady = false
+        legacyGraceElapsed = false
+        uiHandler.removeCallbacks(legacyFallbackRunnable)
+        applyWebContainerInsets()
+        updateFallbackPill()
+    }
+
+    private fun markBridgeReady() {
+        bridgeReady = true
+        serverOffline = false
+        legacyGraceElapsed = false
+        uiHandler.removeCallbacks(legacyFallbackRunnable)
+        applyWebContainerInsets()
+        updateFallbackPill()
+    }
+
+    private fun activeServerDisplayName(): String {
+        val host = HostStore.getActiveHost(this)
+        return host?.name?.takeIf { it.isNotBlank() } ?: getString(R.string.servers)
+    }
+
+    private fun updateFallbackPill() {
+        when (
+            WebBridgePolicy.resolveFallbackPillState(
+                bridgeReady = bridgeReady,
+                isOffline = serverOffline,
+                legacyGraceElapsed = legacyGraceElapsed,
+            )
+        ) {
+            FallbackPillState.HIDDEN -> {
+                fallbackPill.visibility = View.GONE
+            }
+            FallbackPillState.LEGACY_CONNECTED -> {
+                fallbackPillLabel.text = activeServerDisplayName()
+                ViewCompat.setBackgroundTintList(
+                    fallbackPillDot,
+                    ColorStateList.valueOf(ContextCompat.getColor(this, R.color.relaytv_status_online)),
+                )
+                fallbackPill.visibility = View.VISIBLE
+            }
+            FallbackPillState.OFFLINE -> {
+                fallbackPillLabel.text = getString(R.string.fallback_server_offline)
+                ViewCompat.setBackgroundTintList(
+                    fallbackPillDot,
+                    ColorStateList.valueOf(ContextCompat.getColor(this, R.color.relaytv_status_offline)),
+                )
+                fallbackPill.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    private fun openSettings() {
+        startActivity(Intent(this, SettingsActivity::class.java))
     }
 
     private fun openPrivacyPolicy() {
@@ -350,9 +529,12 @@ class MainActivity : AppCompatActivity() {
         uiHandler.removeCallbacksAndMessages(null)
         unregisterNetworkCallback()
         mdnsScanner?.stop()
+        serverPickerDialog?.dismiss()
+        serverPickerDialog = null
         pendingWebFileCallback?.onReceiveValue(null)
         pendingWebFileCallback = null
         if (this::web.isInitialized) {
+            web.removeJavascriptInterface("RelayTVAndroid")
             web.destroy()
         }
         super.onDestroy()
@@ -364,6 +546,8 @@ class MainActivity : AppCompatActivity() {
             return
         }
         activeBaseUrl = normalized
+        serverOffline = false
+        resetBridgeForPageLoad()
         syncWebViewApiToken(web, web.url.orEmpty())
         probeServerHealth(
             base = normalized,
@@ -461,6 +645,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     val recovered = consecutiveHealthFailures > 0
                     consecutiveHealthFailures = 0
+                    serverOffline = false
                     // Keep observing playback while the UI is visible: playback started in
                     // the WebView does not otherwise wake a service that stopped while idle.
                     if (isInForeground) {
@@ -484,6 +669,7 @@ class MainActivity : AppCompatActivity() {
 
                     mainFrameFailed = false
                     initialLoadComplete = true
+                    updateFallbackPill()
                     scheduleHeartbeat(HEARTBEAT_OK_MS)
                 }
             }
@@ -492,6 +678,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun onServerHealthFailed(forcePickerOnFailure: Boolean, manualRefresh: Boolean) {
         consecutiveHealthFailures += 1
+        serverOffline = true
+        uiHandler.removeCallbacks(legacyFallbackRunnable)
+        updateFallbackPill()
 
         if (forcePickerOnFailure && !initialLoadComplete) {
             Toast.makeText(this, getString(R.string.server_unreachable_switch), Toast.LENGTH_LONG).show()
@@ -575,13 +764,35 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showServerPicker(force: Boolean = false) {
-        val view = LayoutInflater.from(this).inflate(R.layout.dialog_server_picker, null)
+        if (serverPickerDialog?.isShowing == true) {
+            if (!force) return
+            serverPickerDialog?.dismiss()
+        }
+
+        val view = LayoutInflater.from(this).inflate(R.layout.bottom_sheet_server_picker, null)
+        val sheetRoot = view.findViewById<View>(R.id.serverSheetRoot)
         val list = view.findViewById<ListView>(R.id.listServers)
-        val btnAdd = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnAdd)
-        val btnEdit = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnEdit)
-        val btnRemove = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnRemove)
-        val btnDiscover = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnDiscover)
-        val txtActiveServer = view.findViewById<android.widget.TextView>(R.id.txtActiveServer)
+        val btnAdd = view.findViewById<MaterialButton>(R.id.btnAdd)
+        val btnEdit = view.findViewById<MaterialButton>(R.id.btnEdit)
+        val btnRemove = view.findViewById<MaterialButton>(R.id.btnRemove)
+        val btnDiscover = view.findViewById<MaterialButton>(R.id.btnDiscover)
+        val btnExit = view.findViewById<MaterialButton>(R.id.btnExit)
+        val btnSheetReload = view.findViewById<MaterialButton>(R.id.btnSheetReload)
+        val btnSheetSettings = view.findViewById<MaterialButton>(R.id.btnSheetSettings)
+        val btnSheetPrivacy = view.findViewById<MaterialButton>(R.id.btnSheetPrivacy)
+        val txtActiveServer = view.findViewById<TextView>(R.id.txtActiveServer)
+
+        val initialSheetBottomPadding = sheetRoot.paddingBottom
+        ViewCompat.setOnApplyWindowInsetsListener(sheetRoot) { v: View, insets: WindowInsetsCompat ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.setPadding(
+                v.paddingLeft,
+                v.paddingTop,
+                v.paddingRight,
+                initialSheetBottomPadding + systemBars.bottom,
+            )
+            insets
+        }
 
         val hostStatuses = mutableMapOf<String, String>()
         val statusChecksInFlight = mutableSetOf<String>()
@@ -645,6 +856,14 @@ class MainActivity : AppCompatActivity() {
             })
         }
 
+        val dialog = BottomSheetDialog(this, R.style.ThemeOverlay_RelayTV_BottomSheetDialog)
+        dialog.setContentView(view)
+        dialog.setCancelable(!force)
+        dialog.setCanceledOnTouchOutside(!force)
+        dialog.behavior.state = BottomSheetBehavior.STATE_EXPANDED
+        dialog.behavior.skipCollapsed = true
+        dialog.behavior.isDraggable = !force
+
         refresh = { selectionIdInput ->
             val selectionId = selectionIdInput ?: HostStore.getActiveHostId(this)
             val hosts = HostStore.loadHosts(this)
@@ -668,6 +887,9 @@ class MainActivity : AppCompatActivity() {
             if (hosts.isNotEmpty()) list.setItemChecked(idx, true)
             btnEdit.isEnabled = hosts.isNotEmpty()
             btnRemove.isEnabled = hosts.isNotEmpty()
+            btnSheetReload.isEnabled = hosts.isNotEmpty()
+            btnSheetReload.alpha = if (hosts.isNotEmpty()) 1.0f else 0.4f
+            btnExit.visibility = if (force) View.VISIBLE else View.GONE
             renderActiveServer(selectionId)
             hosts.forEach { scheduleHostStatusCheck(it) }
         }
@@ -675,33 +897,35 @@ class MainActivity : AppCompatActivity() {
         refresh(HostStore.getActiveHostId(this))
         btnDiscover.text = getString(R.string.scan_lan)
 
-        val dialog = MaterialAlertDialogBuilder(this)
-            .setTitle(getString(R.string.select_server))
-            .setView(view)
-            .setNegativeButton(if (force) "Exit" else "Close") { d, _ ->
-                d.dismiss()
-                if (force && HostStore.getActiveBaseUrl(this).isNullOrBlank()) {
-                    finish()
-                }
-            }
-            .setPositiveButton("Use") { d, _ ->
-                val hosts = HostStore.loadHosts(this)
-                if (hosts.isEmpty()) {
-                    Toast.makeText(this, "Add a server first.", Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
-                }
-                val pos = list.checkedItemPosition.coerceAtLeast(0)
-                val chosen = hosts.getOrNull(pos) ?: hosts.first()
-                activateHost(chosen)
-                toolbar.subtitle = chosen.name
-                loadServerBase(chosen.baseUrl, forcePickerOnFailure = true, manualRefresh = false)
-                d.dismiss()
-            }
-            .create()
         dialog.setOnDismissListener {
             mdnsScanner?.stop()
             btnDiscover.text = getString(R.string.scan_lan)
             btnDiscover.isEnabled = true
+            if (serverPickerDialog === dialog) {
+                serverPickerDialog = null
+            }
+        }
+
+        btnExit.setOnClickListener {
+            dialog.dismiss()
+            if (force && (HostStore.getActiveBaseUrl(this).isNullOrBlank() || !initialLoadComplete)) {
+                finish()
+            }
+        }
+
+        btnSheetReload.setOnClickListener {
+            dialog.dismiss()
+            loadActiveServer(forcePickerOnFailure = false, manualRefresh = true)
+        }
+
+        btnSheetSettings.setOnClickListener {
+            dialog.dismiss()
+            openSettings()
+        }
+
+        btnSheetPrivacy.setOnClickListener {
+            dialog.dismiss()
+            openPrivacyPolicy()
         }
 
         btnDiscover.setOnClickListener {
@@ -723,7 +947,6 @@ class MainActivity : AppCompatActivity() {
                     showDiscoveredServersDialog(servers) { selected ->
                         val host = upsertDiscoveredServer(selected)
                         activateHost(host)
-                        toolbar.subtitle = host.name
                         hostStatuses.remove(host.id)
                         statusChecksInFlight.remove(host.id)
                         refresh(host.id)
@@ -746,11 +969,11 @@ class MainActivity : AppCompatActivity() {
             val hosts = HostStore.loadHosts(this)
             val chosen = hosts.getOrNull(position) ?: return@setOnItemClickListener
             activateHost(chosen)
-            toolbar.subtitle = chosen.name
             renderActiveServer(chosen.id)
             loadServerBase(chosen.baseUrl, forcePickerOnFailure = true, manualRefresh = false)
             dialog.dismiss()
         }
+
         fun showAddEdit(existing: RelayHost? = null) {
             val nameInput = EditText(this).apply {
                 hint = getString(R.string.server_name)
@@ -859,6 +1082,7 @@ class MainActivity : AppCompatActivity() {
                                         ApiTokenCheckResult.UNSUPPORTED -> Unit
                                     }
 
+                                    val wasWithoutServer = activeBaseUrl.isNullOrBlank()
                                     val host = if (existing == null) {
                                         HostStore.create(this@MainActivity, name, base, apiToken)
                                     } else {
@@ -877,6 +1101,10 @@ class MainActivity : AppCompatActivity() {
                                     refresh(host.id)
                                     syncWebViewApiToken(web, web.url.orEmpty())
                                     dlg.dismiss()
+                                    if (wasWithoutServer || force) {
+                                        loadServerBase(host.baseUrl, forcePickerOnFailure = false, manualRefresh = false)
+                                        dialog.dismiss()
+                                    }
                                 }
                             }
                         }
@@ -886,7 +1114,6 @@ class MainActivity : AppCompatActivity() {
 
             dlg.show()
         }
-
 
         btnAdd.setOnClickListener { showAddEdit(null) }
 
@@ -914,11 +1141,7 @@ class MainActivity : AppCompatActivity() {
                 .show()
         }
 
-        // Show active server on toolbar
-        HostStore.loadHosts(this).firstOrNull { it.id == HostStore.getActiveHostId(this) }?.let {
-            toolbar.subtitle = it.name
-        }
-
+        serverPickerDialog = dialog
         dialog.show()
     }
 }

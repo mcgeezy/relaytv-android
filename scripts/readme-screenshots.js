@@ -45,30 +45,12 @@ function capture(serial) {
   return adb(serial, ['exec-out', 'screencap', '-p'], null);
 }
 
-function screenSize(serial) {
-  const output = adb(serial, ['shell', 'wm', 'size']);
-  const match = output.match(/Physical size:\s*(\d+)x(\d+)/);
-  if (!match) throw new Error(`Unable to parse Android screen size: ${output}`);
-  return { width: Number(match[1]), height: Number(match[2]) };
-}
-
-function tapServerAction(serial, size) {
-  adb(serial, ['shell', 'uiautomator', 'dump', '/sdcard/relaytv-readme.xml']);
-  const xml = adb(serial, ['exec-out', 'cat', '/sdcard/relaytv-readme.xml']);
-  const node = xml.match(/<node[^>]*content-desc="Servers"[^>]*>/)?.[0] || '';
-  const bounds = node.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);
-  if (bounds) {
-    const x = Math.round((Number(bounds[1]) + Number(bounds[3])) / 2);
-    const y = Math.round((Number(bounds[2]) + Number(bounds[4])) / 2);
-    adb(serial, ['shell', 'input', 'tap', String(x), String(y)]);
-    return;
-  }
-
-  // AppCompat places the server action at roughly two thirds of the toolbar.
+function openServerSheet(serial) {
   adb(serial, [
-    'shell', 'input', 'tap',
-    String(Math.round(size.width * 0.66)),
-    String(Math.round(size.height * 0.08)),
+    'shell', 'am', 'start',
+    '-n', 'pro.relaytv/.MainActivity',
+    '--activity-single-top',
+    '--ez', 'open_servers', 'true',
   ]);
 }
 
@@ -78,13 +60,12 @@ async function captureScreens(serial) {
     throw new Error('The Android device must be connected and unlocked.');
   }
 
-  const size = screenSize(serial);
   adb(serial, ['shell', 'cmd', 'statusbar', 'collapse']);
   adb(serial, ['shell', 'am', 'start', '-n', 'pro.relaytv/.MainActivity']);
   await sleep(4000);
   const main = capture(serial);
 
-  tapServerAction(serial, size);
+  openServerSheet(serial);
   await sleep(1800);
   const servers = capture(serial);
   adb(serial, ['shell', 'input', 'keyevent', '4']);
