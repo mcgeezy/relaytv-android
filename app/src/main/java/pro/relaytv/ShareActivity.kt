@@ -48,16 +48,16 @@ class ShareActivity : AppCompatActivity() {
 
         internal fun extractUrl(text: String?): String? {
             if (text.isNullOrBlank()) return null
-            val m = Regex("""https?://\S+""", RegexOption.IGNORE_CASE).find(text)
+            val m = Regex("""(?<![A-Za-z0-9+-])(?:https?|rtsps?)://\S+""", RegexOption.IGNORE_CASE).find(text)
             val cleaned = m?.value?.trim()?.trimEnd(')', ']', '>', '"', '\'', ',', ';')
-                ?.takeIf { it.length > "https://".length }
                 ?: return null
             val colonIdx = cleaned.indexOf("://")
-            return if (colonIdx > 0) {
-                cleaned.substring(0, colonIdx).lowercase() + cleaned.substring(colonIdx)
-            } else {
-                cleaned
-            }
+            if (colonIdx <= 0) return null
+            val rest = cleaned.substring(colonIdx + 3)
+            val authority = rest.substringBefore('/').substringBefore('?').substringBefore('#')
+            val hostPort = authority.substringAfterLast('@')
+            if (hostPort.isEmpty() || hostPort.startsWith(':')) return null
+            return cleaned.substring(0, colonIdx).lowercase() + cleaned.substring(colonIdx)
         }
 
         internal fun isLocalStreamScheme(scheme: String?): Boolean =
