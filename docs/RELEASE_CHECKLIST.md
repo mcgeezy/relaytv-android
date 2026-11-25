@@ -76,10 +76,11 @@ Use this checklist before cutting a public release or uploading a new Play Conso
    - Roam between Wi-Fi networks while playback is active. The previous
      connection must retire, the current network must reconnect, and retained
      state must not be replaced by a late callback.
-7. Confirm the Settings screen opens from the toolbar menu and "Manage servers" opens the server picker.
-8. Confirm a server without `RELAYTV_API_TOKEN` still supports WebView controls, shares, uploads, and media controls.
-9. Confirm a protected server accepts a valid per-server API token and rejects a missing or incorrect token.
-10. Confirm a server without `/realtime/capabilities` uses legacy SSE, keeps
+7. Confirm the Settings screen opens from the web header menu (**App settings**) and from the server picker bottom sheet (**Settings**), and that **Manage servers** opens the server picker bottom sheet.
+8. Confirm the frameless header bridge works with RelayTV server v0.13.0+ (tapping the server title opens the server picker bottom sheet, the header menu includes **Switch server / App settings / Reload / Privacy policy**, and status/nav bar colors follow Auto/Dark/Light theme changes), and confirm the bottom fallback pill appears when offline or connected to an older server without the bridge.
+9. Confirm a server without `RELAYTV_API_TOKEN` still supports WebView controls, shares, uploads, and media controls.
+10. Confirm a protected server accepts a valid per-server API token and rejects a missing or incorrect token.
+11. Confirm a server without `/realtime/capabilities` uses legacy SSE, keeps
     command confirmation polling after media-key actions, and discovers
     WebSocket without an app restart after the server is upgraded.
 
