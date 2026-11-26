@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/mcgeezy/relaytv-android/compare/v1.6.0...v1.7.0) (2026-11-25)
+
+
+### Features
+
+* accept rtsp and rtsps links in Android share targets ([#20](https://github.com/mcgeezy/relaytv-android/issues/20)) ([fa3d77c](https://github.com/mcgeezy/relaytv-android/commit/fa3d77cf3df0fb44a6cc78783d1fcc751e7a0ba3))
+
 ## [1.6.0](https://github.com/mcgeezy/relaytv-android/compare/v1.5.2...v1.6.0) (2026-11-25)
 
 
