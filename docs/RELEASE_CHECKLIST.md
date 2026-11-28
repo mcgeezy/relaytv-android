@@ -1,6 +1,6 @@
 # RelayTV Android Release Checklist
 
-Use this checklist before cutting a public release or uploading a new Play Console build.
+Use this checklist before cutting a public release or uploading a new Play Console build. See [`DEVELOPMENT.md`](DEVELOPMENT.md) for local build setup, signing properties, and CI workflow details.
 
 ## Build Readiness
 
@@ -45,13 +45,14 @@ Use this checklist before cutting a public release or uploading a new Play Conso
    - For proxied HTTPS, confirm `/ui/ws` upgrades to `wss://` and remains
      connected through the proxy's idle timeout.
 2. Confirm LAN discovery finds `_relaytv._tcp` services on the local network.
-3. Confirm both Android share targets work:
-   - `RelayTV Queue` -> `/smart`
-   - `RelayTV Play` -> `/play_now`
+3. Confirm both Android share targets (`Play` and `Queue`) work across supported inputs:
+   - HTTP/HTTPS links and playlists (`Queue` -> `/smart`, `Play` -> `/play_now`)
+   - `rtsp://` and `rtsps://` URLs via both Android Share (`ACTION_SEND`) and direct link open (`ACTION_VIEW`), confirming embedded URL credentials/tokens are redacted from the result notification
+   - Local audio and video file uploads (`Queue` -> `/ingest/media/enqueue`, `Play` -> `/ingest/media/play`)
 4. Confirm the WebView reconnects after the RelayTV server restarts or the network drops.
 5. Confirm the privacy menu opens the published policy URL.
 6. Confirm system media controls appear while the active server is playing:
-   - Play/pause, next/previous, seek, and the volume slider control the server.
+   - Play/pause, next/previous, seek (including live DVR seekable vs non-seekable streams), and the volume slider control the server.
    - The notification disappears after the server goes idle.
    - The Settings toggle ("Media controls") removes and restores the controls.
    - A current server uses `/ui/ws`; blocking WebSocket falls back to `/ui/events`.

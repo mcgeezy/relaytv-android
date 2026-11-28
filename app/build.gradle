@@ -34,9 +34,10 @@ android {
         versionName = relayTvVersionName
     }
 
-    // Release signing is configured via gradle.properties (see todo.md /
-    // docs/RELEASE_CHECKLIST.md); without those properties the release
-    // build stays unsigned so CI and local debug workflows keep working.
+    // Release signing is configured via gradle.properties (see
+    // docs/DEVELOPMENT.md and docs/RELEASE_CHECKLIST.md); without those
+    // properties the release build stays unsigned so CI and local debug
+    // workflows keep working.
     signingConfigs {
         release {
             if (project.hasProperty("MYAPP_RELEASE_STORE_FILE")) {

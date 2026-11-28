@@ -1,6 +1,6 @@
 # RelayTV Android Privacy Policy
 
-Last updated: July 24, 2026
+Last updated: November 28, 2026
 
 ## Summary
 
@@ -14,14 +14,15 @@ RelayTV Android may process the following categories of data in order to operate
    - Server names and base URLs you add in the app
    - The currently selected active server
    - Optional API tokens you provide for protected RelayTV servers
-2. Shared content
-   - Links you share into the app using Android share targets such as `RelayTV Queue` and `RelayTV Play`
+2. Shared and uploaded content
+   - Web links, playlists, and `rtsp://` / `rtsps://` stream URLs you share into or open with the app (`Play` and `Queue`)
+   - Compatible local audio or video files you share into the app or choose through the embedded web UI's file picker
 3. Local network discovery data
    - RelayTV service advertisements discovered on your local network via mDNS / NSD
 4. Device-local notification data
-   - Notification text used to confirm a queue or play action
+   - Notification text used to confirm a queue, play, or upload action (with embedded URL credentials and common authentication query parameters redacted)
 5. Playback status data
-   - Now-playing metadata (title, artwork, playback position, volume) received from your selected RelayTV server by WebSocket, Server-Sent Events, or HTTP polling to render system media controls
+   - Now-playing metadata (title, artwork, playback position, live DVR window, volume) received from your selected RelayTV server by WebSocket, Server-Sent Events, or HTTP polling to render system media controls
 
 ## How The App Uses Data
 
@@ -29,15 +30,17 @@ RelayTV Android uses the data above only to:
 
 1. Connect to the RelayTV server you selected
 2. Load the RelayTV web UI in an embedded WebView
-3. Send shared links to RelayTV endpoints such as `/smart` or `/play_now`
+3. Send shared links and stream URLs to RelayTV endpoints (`/smart` or `/play_now`) and upload user-selected media files to RelayTV ingest endpoints (`/ingest/media/enqueue` or `/ingest/media/play`)
 4. Discover compatible RelayTV servers on your local network
-5. Show local notifications about share results and reconnect state
+5. Show local notifications about share/upload results and reconnect state
 6. Show optional system media controls (lock screen / quick settings) that mirror and control playback on your selected server, preferring local push updates with HTTP polling fallback
 7. Authenticate control, share, upload, and media-control requests when your RelayTV server requires an API token
 
 ## Data Storage
 
 The app stores configured server names, base URLs, and optional API tokens locally in app-private storage on your device. These preferences are excluded from Android backup and device transfer. A configured token is also copied into the selected server origin's WebView local storage so the embedded RelayTV UI can authenticate write requests.
+
+When you share a local audio or video file to RelayTV, the app stages a temporary copy in app-private cache storage (`cacheDir/shared-media`) only long enough for background upload completion, deletes the staged copy when the transfer finishes, and prunes any leftover staged files older than 48 hours.
 
 The app does not operate its own cloud backend and does not sync your app data to a RelayTV-operated online service.
 
