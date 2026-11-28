@@ -13,6 +13,8 @@
 <p align="center">
   <a href="#install-in-minutes"><strong>Install</strong></a> ·
   <a href="#see-it-in-action"><strong>See it in action</strong></a> ·
+  <a href="#operator-and-network-guide"><strong>Operator guide</strong></a> ·
+  <a href="docs/DEVELOPMENT.md"><strong>Development</strong></a> ·
   <a href="https://github.com/mcgeezy/relaytv-android/releases"><strong>Releases</strong></a> ·
   <a href="https://github.com/mcgeezy/relaytv"><strong>RelayTV server</strong></a>
 </p>
@@ -38,22 +40,24 @@
 
 ### Send it
 
-Share a link, video, or audio file from Android and choose **Play** to start it
-now or **Queue** to put it next. No copying a URL, opening another app, or
-walking back to the TV.
+Share a web link, playlist, `rtsp://` or `rtsps://` stream, or compatible local
+video or audio file from Android—or tap an RTSP link directly—and choose
+**Play** to start it immediately or **Queue** to line it up next. No copying a
+URL, opening another app, or walking back to the TV.
 
 ### Control it
 
-Open the complete RelayTV web remote inside the app. Play, pause, seek, skip,
-adjust volume, manage the queue, and browse Jellyfin, Emby, or IPTV from the
-same screen. RelayTV also publishes lock-screen and quick-settings media
-controls for the active server.
+Open the complete frameless RelayTV web remote inside the app. Play, pause,
+seek (including live DVR buffers), skip, adjust TV volume, manage the queue,
+and browse **Plex, Jellyfin, Emby, Seerr requests, or live IPTV** from one
+screen. RelayTV also publishes native lock-screen and quick-settings media
+controls for your active server.
 
 ### Find it
 
 RelayTV servers announce themselves over `_relaytv._tcp` mDNS. Scan the LAN,
-check health, switch between multiple screens, and keep an optional API token
-with each server profile.
+verify server health, switch between multiple rooms or screens, and store an
+optional API token with each server profile.
 
 The Android app stays lightweight while the RelayTV box beside the television
 owns playback, queue advancement, history, and the display runtime.
@@ -73,12 +77,12 @@ owns playback, queue advancement, history, and the display runtime.
     <td valign="top">
       <h3>Everything you need from the couch</h3>
       Control current playback, seek, change volume, manage the queue, and open
-      the complete RelayTV library experience without switching devices.
+      your full RelayTV library experience in an edge-to-edge native wrapper.
     </td>
     <td valign="top">
       <h3>Two targets, zero friction</h3>
-      Send links and compatible local audio or video files directly from the
-      Android share sheet. Play immediately or queue for later.
+      Send links, playlists, RTSP streams, and local audio or video files
+      directly from the Android share sheet. Play immediately or queue for later.
     </td>
   </tr>
 </table>
@@ -95,162 +99,114 @@ owns playback, queue advancement, history, and the display runtime.
   <tr>
     <td valign="top">
       <h3>Every RelayTV screen, one tap away</h3>
-      Keep several servers in one app, verify availability, switch active
-      screens, and discover new RelayTV devices without typing an IP address.
+      Keep several servers in one app, check online status at a glance, switch
+      active screens, and discover new RelayTV devices without typing an IP.
     </td>
     <td valign="top">
       <h3>Playback controls that follow you</h3>
       RelayTV publishes the active server as an Android media session, putting
-      artwork, play/pause, previous, next, and seek controls on the lock screen
-      and in the notification shade.
+      artwork, play/pause, previous, next, seek, and remote volume on your lock
+      screen and notification shade.
     </td>
   </tr>
 </table>
 
-Protected servers use the same optional bearer token for WebView controls,
-shares, uploads, and native media controls.
-
-Native media controls automatically choose the best local state transport:
-the versioned RelayTV WebSocket first, the compatible SSE stream second, and
-adaptive `/status` polling during outages or with older network paths. The
-embedded WebView independently uses the same server-advertised preference.
-
-> The images above were captured from a physical Android device and composed
-> with [`scripts/readme-screenshots.js`](scripts/readme-screenshots.js).
-
 ## Install in minutes
 
 1. Install and configure a [RelayTV server](https://github.com/mcgeezy/relaytv).
-2. Download the latest APK from [GitHub Releases](https://github.com/mcgeezy/relaytv-android/releases).
+2. Download the latest `relaytv-v*.apk` from [GitHub Releases](https://github.com/mcgeezy/relaytv-android/releases).
 3. Allow installation from the browser or file manager you used to download it.
-4. Open RelayTV and select **Scan LAN**, or add the server URL manually.
-5. Enter the server API token only when `RELAYTV_API_TOKEN` is enabled.
+4. Open RelayTV and tap **Scan LAN**, or tap **Add** to enter a server URL manually (for example `http://10.0.55.2:8787` or `https://tv.example.com`).
+5. Enter the server **API token** only if `RELAYTV_API_TOKEN` is enabled on that server.
+6. Allow the Android **Notifications** prompt (Android 13+) so share results and lock-screen media controls can appear.
 
-> **Upgrading from v1.3.1 or earlier:** GitHub previously distributed a
-> debug-signed APK. Record your configured server details, uninstall that APK,
-> and install the current release APK once to move to the stable signing key.
-> Future GitHub release APKs can then upgrade in place.
+> **Upgrading from v1.3.1 or earlier:** Early GitHub builds were signed with a
+> debug key. Note your saved server URLs, uninstall the older APK once, and
+> install the current release APK to move onto the stable release signing key.
+> All newer GitHub release APKs upgrade in place.
 
-The app verifies `GET /health` before saving a server. A protected server also
-validates the supplied credential through `POST /auth/check`.
+Before saving a profile, RelayTV checks that the server is reachable and—when
+authentication is enabled—verifies your API token.
 
-## Share from Android
+## Using RelayTV Android
 
-Android presents two RelayTV targets for compatible content:
+### Navigating the remote and switching servers
 
-| Target | Links | Local media | Behavior |
-| --- | --- | --- | --- |
-| **Play** | `POST /play_now` | `POST /ingest/media/play` | Start immediately |
-| **Queue** | `POST /smart` | `POST /ingest/media/enqueue` | Add to the queue |
+- **Frameless header (RelayTV server v0.13.0+):** Tap the **server name** in the top header to open the **Server Picker** bottom sheet, or open the header menu for **Switch server**, **App settings**, **Reload**, and **Privacy policy**. System status and navigation bars automatically match your RelayTV Auto, Dark, or Light theme.
+- **Offline or legacy server pill:** If the active server goes offline or runs an older RelayTV version without the mobile header bridge, a floating pill appears near the bottom of the screen so you can still switch servers, reload, or open settings.
+- **External sign-in flows:** Third-party authentication links (such as Plex sign-in) open in your default Android browser while keeping RelayTV navigation inside the app.
 
-Local sharing accepts content exposed by Android as `video/*` or `audio/*`.
-The RelayTV server performs final MIME validation and ingest processing.
+### Sharing from Android
+
+Android shows two RelayTV targets whenever you share compatible content or open an RTSP stream link:
+
+| Target | What it does | Supported inputs |
+| --- | --- | --- |
+| **Play** | Starts playback immediately on the active RelayTV server | Web video/audio URLs, playlists, `rtsp://` / `rtsps://` streams, and local media files |
+| **Queue** | Appends the item (or playlist) to the active server's queue | Web video/audio URLs, playlists, `rtsp://` / `rtsps://` streams, and local media files |
+
+- **Supported local upload formats:** `MP4`, `M4V`, `WebM`, `MP3`, `M4A`, `AAC`, `WAV`, `FLAC`, `OGG`, and `OPUS`. The RelayTV server performs final MIME validation and ingest processing.
+- **Direct stream links:** Tapping an `rtsp://` or `rtsps://` link in another app offers **Play** and **Queue** directly without opening the share sheet first.
+- **First-run safeguard:** Sharing before any server is configured opens the Server Picker so you can connect a server first.
+
+### Lock-screen and quick-settings media controls
+
+- Enabled by default and toggleable at any time under **App settings → Media controls**.
+- Mirrors track title, server name, artwork, playback position, live DVR seek windows, and remote server volume (`0–100%`)—no audio plays on your phone.
+- Designed for low battery impact: updates arrive over local push (`WebSocket`, then `SSE`) whenever available, and the background media session stops itself automatically once playback has been idle for 5 minutes or unreachable for 90 seconds.
+
+## Operator and network guide
+
+### LAN discovery (`_relaytv._tcp`)
+
+- **Scan LAN** listens for `_relaytv._tcp` mDNS announcements on your current Wi-Fi broadcast domain (IPv4 and IPv6).
+- mDNS does not cross routed subnets, isolated guest Wi-Fi, or most VPN tunnels by default. In segmented or remote setups, add the server manually using `host:port` (defaults to `http://`) or a full `http://` / `https://` URL.
+
+### API token authentication (`RELAYTV_API_TOKEN`)
+
+- Leave **API token** blank for trusted, unauthenticated LAN servers.
+- When `RELAYTV_API_TOKEN` is set on a RelayTV server, add that token to its profile in the Server Picker (**Add** or **Edit**).
+- The same stored profile token authenticates embedded WebView actions, Android shares, local file uploads, and native lock-screen media controls for that server.
+
+### Reverse proxies and HTTPS
+
+- Cleartext `http://` works out of the box for private LAN and VPN addresses; use `https://` whenever exposing a server beyond a trusted private network.
+- **WebSocket upgrades:** Current RelayTV servers push realtime state over `/ui/ws` (`wss://` over HTTPS) using `Sec-WebSocket-Protocol: relaytv.realtime.v1`. Ensure your reverse proxy (Caddy, Nginx, Traefik, Cloudflare, or Tailscale Serve) forwards `Upgrade`, `Connection`, and `Sec-WebSocket-Protocol` headers and keeps read timeouts above the server heartbeat (`~5s` default).
+- **Automatic transport fallback:** If a proxy or network path blocks WebSockets, both the WebView and native media controls automatically fall back to Server-Sent Events (`/ui/events`, disable proxy response buffering) and then adaptive HTTP polling.
+- **Upload body limits:** If you share local video or audio files through a reverse proxy, set its maximum request body size (for example Nginx `client_max_body_size`) high enough for your media files.
+
+### VPNs and remote access (Tailscale, WireGuard)
+
+- Share jobs dispatch immediately without waiting for Android's internet-validation check (`NET_CAPABILITY_VALIDATED`), so sharing works reliably on air-gapped LANs, Tailscale, and split- or full-tunnel WireGuard networks.
+- You can save separate profiles for home and away (for example `Living Room (LAN)` and `Living Room (Tailscale)`) or use a single MagicDNS / split-DNS hostname that resolves everywhere.
+
+## Troubleshooting
+
+- **Scan LAN finds no servers:** Confirm your phone and RelayTV host are on the same Wi-Fi VLAN, AP client isolation is disabled, and UDP port `5353` multicast is permitted. Otherwise, add `http://<server-ip>:8787` manually.
+- **Share or media-control notifications do not appear:** On Android 13+, confirm **Notifications** are allowed for RelayTV in system App Info, and check **App settings → Media controls**.
+- **Package conflict when installing a new APK:** If upgrading from `v1.3.1` or earlier, uninstall the older debug-signed build once before installing the release-signed APK.
+- **Media controls lag or disconnect behind a proxy:** Verify `/ui/ws` forwards WebSocket upgrade headers and `Sec-WebSocket-Protocol`, or disable proxy buffering on `/ui/events`.
 
 ## Security and privacy
 
-- The app has no RelayTV cloud account, analytics service, or advertising SDK.
-- Server profiles and optional tokens stay in app-private device storage.
-- Token-bearing preferences are excluded from Android backup and device transfer.
-- Tokens are sent only as `Authorization: Bearer` headers to the configured server.
-- HTTP remains available for trusted LAN deployments; use HTTPS or a VPN across untrusted networks.
+- No RelayTV cloud account, analytics service, or advertising SDK.
+- Server profiles and optional API tokens stay in app-private storage excluded from Android cloud backup and device-to-device transfer.
+- API tokens are sent only as `Authorization: Bearer` headers (and scoped to the matching server origin inside the embedded WebView).
+- Shared URLs have embedded credentials and common auth query tokens redacted before appearing in local Android notifications.
+- Shared local media files are staged in private cache only for upload and cleaned up automatically afterward.
 
-See the [privacy policy](docs/PRIVACY_POLICY.md) for the complete data-handling
-description.
+Read the full [privacy policy](docs/PRIVACY_POLICY.md) for complete data-handling and permission details.
 
 ## Compatibility
 
-- Android 8.0 or newer (`minSdk 26`)
-- Android 15 target (`targetSdk 35`)
-- A reachable RelayTV server on a local network, VPN, or trusted HTTPS URL
-- Optional `_relaytv._tcp` mDNS advertisement for automatic discovery
-- Current servers use the versioned WebSocket transport; older servers without
-  `/realtime/capabilities` remain supported through SSE and adaptive polling,
-  so server and app upgrades do not need to be synchronized
+- **Android:** Android 8.0 (Oreo) or newer
+- **Server connectivity:** Reachable RelayTV server over LAN, VPN, or HTTPS
+- **UI bridge:** Full frameless header and theme sync with RelayTV server `v0.13.0+`; older servers remain supported via the floating server pill
+- **Upgrade flexibility:** Forward- and backward-compatible realtime sync (`WebSocket` → `SSE` → HTTP polling), so server and Android app updates never have to be synchronized
 
-The current semantic version is tracked in [`version.txt`](version.txt). Gradle
-derives a monotonic Android `versionCode` from its `major.minor.patch` value.
+## Contributing and development
 
-## Build and test
-
-RelayTV Android uses Java 17, the Android SDK, and the checked-in Gradle wrapper.
-
-```bash
-./scripts/bootstrap-android.sh
-./scripts/build-debug.sh
-```
-
-The debug pipeline runs a clean APK build, Android lint, and JVM unit tests.
-Its APK is written to:
-
-```text
-app/build/outputs/apk/debug/app-debug.apk
-```
-
-Run instrumentation tests with an unlocked physical device or emulator:
-
-```bash
-adb devices
-./scripts/test-connected.sh
-```
-
-Build the release APK and bundle, then run release lint:
-
-```bash
-./scripts/build-release.sh
-```
-
-Without release signing properties, Gradle writes an unsigned APK to
-`app/build/outputs/apk/release/app-release-unsigned.apk` and the Android App
-Bundle to `app/build/outputs/bundle/release/app-release.aab`. GitHub Releases
-use the configured signing secrets to produce and verify an installable
-`app-release.apk`. See the [release checklist](docs/RELEASE_CHECKLIST.md)
-before publishing.
-
-### Regenerate README images
-
-Connect an unlocked device with a configured RelayTV server, then run:
-
-```bash
-npm install
-npx playwright install chromium
-npm run readme:screenshots -- --serial="$(adb devices | awk '$2 == "device" { print $1; exit }')"
-```
-
-The script opens RelayTV and captures the remote, server picker, Android share
-chooser, and system media controls, then rebuilds the images in
-`docs/images/readme`.
-
-## Releases
-
-Release Please maintains one rolling `chore(main): release …` pull request from
-Conventional Commit titles merged into `main`. Regular pull requests run only
-debug CI. When the release chore is ready:
-
-1. Review its version bump and `CHANGELOG.md` update.
-2. Wait for Android CI to pass.
-3. Merge the release chore.
-4. Release Please creates a draft tag and GitHub Release.
-5. The signed release workflow builds, verifies, and uploads the release APK and AAB.
-6. The workflow publishes the draft only after every release step succeeds.
-
-Use squash-merge titles such as `feat: add playback control` or
-`fix: authenticate media uploads`. A `feat:` selects a minor release, `fix:` a
-patch release, and a Conventional Commit breaking change selects a major
-release. Documentation and CI commits are included in the changelog without
-independently forcing a release.
-
-For fully automatic CI on Release Please's generated pull request, configure a
-fine-grained `RELEASE_PLEASE_TOKEN` Actions secret with repository contents,
-issues, and pull-request write access. The workflow falls back to
-`GITHUB_TOKEN`, but GitHub may require approval for workflow runs created by
-that token.
-
-Signing credentials remain in GitHub Actions secrets. The **Build Android
-release** workflow also supports manual dispatch to retry an existing draft
-release by tag and commit SHA.
-
-Complete the [release checklist](docs/RELEASE_CHECKLIST.md), including
-physical-device connectivity and fallback verification, before publishing.
+Architecture notes, server API and WebView bridge contracts, local SDK/Gradle build scripts, screenshot generation, and Release Please CI workflows are documented in **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)**.
 
 ## Companion projects
 
